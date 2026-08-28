@@ -1,0 +1,104 @@
+---
+import type { Week } from '../types/curriculum';
+import DayCard from './DayCard.astro';
+
+interface Props {
+  week: Week;
+}
+
+const { week } = Astro.props;
+const no = String(week.no).padStart(2, '0');
+---
+
+<section class="week" id={`w${week.no}`}>
+  <div class="head">
+    <span class="badge">WEEK {no}</span>
+    <div>
+      <h3>{week.title}</h3>
+      {week.story && <div class="story">{week.story}</div>}
+      <div class="sub">{week.goal}</div>
+    </div>
+    <span class="count" data-week-count={week.no}>0 / {week.days.length} 天</span>
+  </div>
+
+  <div class="days">
+    {week.days.map((day) => <DayCard day={day} weekNo={week.no} />)}
+  </div>
+</section>
+
+<style>
+  .week {
+    scroll-margin-top: 20px;
+  }
+
+  .head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 16px;
+    align-items: center;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-bottom: 0;
+    border-radius: 3px 3px 0 0;
+  }
+
+  .badge {
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+
+  h3 {
+    font-size: 1.22rem;
+  }
+
+  .story {
+    margin-top: 5px;
+    padding: 7px 11px;
+    background: var(--surface-2);
+    border-left: 2px solid var(--amber);
+    border-radius: 2px;
+    color: var(--ink-2);
+    font-size: 0.84rem;
+    line-height: 1.6;
+  }
+
+  .sub {
+    color: var(--ink-2);
+    font-size: 0.84rem;
+    margin-top: 6px;
+  }
+
+  .count {
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .days {
+    border: 1px solid var(--line);
+    border-radius: 0 0 3px 3px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  @media (max-width: 900px) {
+    .head {
+      padding: 14px;
+      grid-template-columns: auto 1fr;
+      row-gap: 6px;
+    }
+
+    .count {
+      grid-column: 1 / -1;
+    }
+  }
+</style>

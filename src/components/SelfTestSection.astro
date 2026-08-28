@@ -1,0 +1,74 @@
+---
+import { selfTest } from '../data/selftest';
+
+let n = 0;
+---
+
+<section id="selftest">
+  <div class="section-head">
+    <div class="kicker">自测</div>
+    <h2>高频考点自测清单</h2>
+    <p>
+      不用现在会。第 8 周时逐条自问，答不上来就回到对应的那天。<b>能用一分钟讲清楚才算过。</b>
+    </p>
+  </div>
+
+  <div class="cols">
+    {
+      selfTest.map((group) => (
+        <div class="card pad">
+          <h4>{group.title}</h4>
+          {group.items.map((item) => {
+            n += 1;
+            return (
+              <div class="qa">
+                <span class="n">{String(n).padStart(2, '0')}</span>
+                <span class="q">
+                  {item.q}
+                  <em>→ {item.ref}</em>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  h4 {
+    font-size: 1rem;
+    margin-bottom: 12px;
+  }
+
+  .qa {
+    border-top: 1px solid var(--line-soft);
+    padding: 11px 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    font-size: 0.88rem;
+  }
+
+  .qa:first-of-type {
+    border-top: 0;
+  }
+
+  .n {
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+    padding-top: 2px;
+  }
+
+  em {
+    display: block;
+    color: var(--ink-3);
+    font-style: normal;
+    font-size: 0.78rem;
+    font-family: var(--f-mono);
+    margin-top: 2px;
+  }
+</style>

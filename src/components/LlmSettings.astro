@@ -1,0 +1,129 @@
+---
+// 出题端点设置弹窗。可被右上「出题设置」按钮和生成按钮（未配置时）唤起，
+// 具体逻辑在 src/scripts/llmSettings.ts。
+---
+
+<div class="mask" data-llm-dialog hidden>
+  <div class="card dlg">
+    <h3>出题端点设置</h3>
+    <p class="hint">
+      请求由浏览器直发你填的端点，不经过任何中间服务器。配置存在本浏览器的 localStorage
+      里；留空保存则回到构建时 .env 的默认值。
+    </p>
+
+    <div class="fields">
+      <label>
+        <span>端点类型</span>
+        <select data-llm-field="type">
+          <option value="anthropic">Anthropic（/v1/messages）</option>
+          <option value="openai">OpenAI 兼容（/chat/completions）</option>
+        </select>
+      </label>
+
+      <label>
+        <span>端点地址</span>
+        <input data-llm-field="baseUrl" placeholder="https://api.anthropic.com" />
+      </label>
+
+      <label>
+        <span>模型</span>
+        <input data-llm-field="model" placeholder="claude-opus-5" />
+      </label>
+
+      <label>
+        <span>API Key</span>
+        <input type="password" data-llm-field="apiKey" placeholder="sk-..." autocomplete="off" />
+      </label>
+    </div>
+
+    <div class="row">
+      <button class="btn" data-action="llm-save">保存</button>
+      <button class="btn" data-action="llm-clear">清空（回到 .env 默认）</button>
+      <button class="btn" data-action="llm-close">关闭</button>
+    </div>
+
+    <p class="status" data-llm-status></p>
+  </div>
+</div>
+
+<style>
+  .mask {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  /* .mask 设了 display，会压掉 UA 样式表里 [hidden] 的 display:none，必须显式补回来 */
+  .mask[hidden] {
+    display: none;
+  }
+
+  .dlg {
+    width: min(440px, 100%);
+    padding: 26px 28px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .hint {
+    color: var(--ink-3);
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+
+  .fields {
+    display: grid;
+    gap: 12px;
+  }
+
+  label {
+    display: grid;
+    gap: 5px;
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  input,
+  select {
+    font-family: var(--f-body);
+    font-size: 0.88rem;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 8px 10px;
+  }
+
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 0;
+  }
+
+  .row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .status {
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    color: var(--green);
+    min-height: 1em;
+  }
+
+  .status.is-error {
+    color: var(--danger);
+  }
+</style>

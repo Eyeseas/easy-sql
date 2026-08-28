@@ -1,0 +1,143 @@
+---
+import { curriculum } from '../data';
+
+interface Props {
+  /** 当前所在周号，周页传入，服务端直接高亮（不再靠滚动监听） */
+  current?: number;
+  /** § 锚点前缀：周页上指向首页区块，需要带 '/' */
+  anchorBase?: string;
+}
+
+const { current, anchorBase = '' } = Astro.props;
+
+const anchors = [
+  { hash: '#method', label: '使用方法' },
+  { hash: '#setup', label: '环境与数据集' },
+  { hash: '#review', label: '复习制度' },
+  { hash: '#selftest', label: '高频考点自测' },
+  { hash: '#output', label: '产出物清单' },
+].map((a) => ({ ...a, href: `${anchorBase}${a.hash}` }));
+---
+
+<nav class="rail">
+  <div class="rail-title">课程表</div>
+
+  {
+    curriculum.map((w) => (
+      <a href={`/week/${w.no}`} class={current === w.no ? 'is-on' : undefined}>
+        <span class="wk">W{w.no}</span>
+        <span>{w.short}</span>
+        <span class="ct" data-rail-count={w.no}>
+          0/{w.days.length}
+        </span>
+      </a>
+    ))
+  }
+
+  <div class="foot">
+    {
+      anchors.map((a) => (
+        <a href={a.href}>
+          <span class="wk">§</span>
+          <span>{a.label}</span>
+          <span class="ct" />
+        </a>
+      ))
+    }
+  </div>
+</nav>
+
+<style>
+  .rail {
+    position: sticky;
+    top: 24px;
+    display: grid;
+    gap: 2px;
+  }
+
+  .rail-title {
+    font-family: var(--f-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-bottom: 10px;
+  }
+
+  a {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 9px;
+    align-items: baseline;
+    padding: 7px 10px;
+    border-radius: 2px;
+    text-decoration: none;
+    color: var(--ink-2);
+    border-left: 2px solid transparent;
+    font-size: 0.84rem;
+  }
+
+  a:hover {
+    background: var(--surface);
+    color: var(--ink);
+  }
+
+  a.is-on {
+    background: var(--surface);
+    color: var(--ink);
+    border-left-color: var(--accent);
+    box-shadow: var(--shadow);
+  }
+
+  .wk {
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    color: var(--ink-3);
+  }
+
+  a.is-on .wk {
+    color: var(--accent);
+  }
+
+  .ct {
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .foot {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 2px;
+  }
+
+  @media (max-width: 900px) {
+    .rail {
+      position: static;
+      grid-auto-flow: column;
+      grid-auto-columns: max-content;
+      overflow-x: auto;
+      gap: 6px;
+      padding-bottom: 6px;
+    }
+
+    .rail-title,
+    .foot {
+      display: none;
+    }
+
+    a {
+      border-left: 0;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+    }
+
+    a.is-on {
+      border-left: 0;
+      border-bottom-color: var(--accent);
+    }
+  }
+</style>

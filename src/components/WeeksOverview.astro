@@ -1,0 +1,104 @@
+---
+import { curriculum } from '../data';
+---
+
+<section id="weeks">
+  <div class="section-head">
+    <div class="kicker">课程表</div>
+    <h2>八周，公司的八个发展阶段</h2>
+    <p>一条业务主线从零开始：每周是公司的一个阶段，表随业务逐张上线，知识点被当天的需求逼出来。点进去就是那周的 7 天日程。</p>
+  </div>
+
+  <div class="grid">
+    {
+      curriculum.map((w) => (
+        <a class="card week-card" href={`/week/${w.no}`}>
+          <div class="top">
+            <span class="badge">W{String(w.no).padStart(2, '0')}</span>
+            <span class="ct" data-rail-count={w.no}>
+              0/{w.days.length}
+            </span>
+          </div>
+          <h3>{w.title}</h3>
+          {w.story && <p class="story">{w.story}</p>}
+          <p>{w.goal}</p>
+          <span class="go">进入本周 →</span>
+        </a>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 14px;
+  }
+
+  .week-card {
+    display: grid;
+    gap: 8px;
+    padding: 18px 20px;
+    text-decoration: none;
+    color: inherit;
+    align-content: start;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .week-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow);
+  }
+
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  .badge {
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    padding: 3px 7px;
+  }
+
+  .ct {
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  h3 {
+    font-size: 1.02rem;
+    margin: 2px 0 0;
+  }
+
+  p {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 0.84rem;
+    line-height: 1.55;
+  }
+
+  p.story {
+    padding: 7px 10px;
+    background: var(--surface-2);
+    border-left: 2px solid var(--amber);
+    border-radius: 2px;
+  }
+
+  .go {
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    color: var(--accent);
+    margin-top: 2px;
+  }
+</style>

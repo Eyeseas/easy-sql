@@ -1,0 +1,53 @@
+---
+import Layout from '../layouts/Layout.astro';
+import SidePanel from '../components/SidePanel.astro';
+import WeekRail from '../components/WeekRail.astro';
+import WeeksOverview from '../components/WeeksOverview.astro';
+import MethodSection from '../components/MethodSection.astro';
+import SetupSection from '../components/SetupSection.astro';
+import ReviewSection from '../components/ReviewSection.astro';
+import SelfTestSection from '../components/SelfTestSection.astro';
+import DeliverablesSection from '../components/DeliverablesSection.astro';
+import { site } from '../data/meta';
+---
+
+<Layout title={site.title}>
+  <div class="wrap shell">
+    <WeekRail />
+
+    <main>
+      <header class="intro">
+        <div class="kicker">{site.eyebrow}</div>
+        <h1>{site.title}</h1>
+        <p class="lede" set:html={site.lede} />
+      </header>
+
+      <MethodSection />
+      <SetupSection />
+      <WeeksOverview />
+      <ReviewSection />
+      <SelfTestSection />
+      <DeliverablesSection />
+    </main>
+
+    <SidePanel />
+  </div>
+</Layout>
+
+<style>
+  .intro {
+    display: grid;
+    gap: 10px;
+  }
+
+  .intro h1 {
+    font-size: var(--step-4);
+    letter-spacing: -0.015em;
+  }
+
+  .lede {
+    color: var(--ink-2);
+    max-width: 60ch;
+    font-size: var(--step-0);
+  }
+</style>

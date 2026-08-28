@@ -1,0 +1,171 @@
+---
+import { site } from '../data/meta';
+import { stats } from '../data';
+
+// 右侧信息栏：品牌/统计/进度/操作。原来是大块页头（Masthead），压到了首屏内容。
+const cells = [
+  { label: '周期', value: `${stats.weeks}`, unit: '周' },
+  { label: '学习日', value: `${stats.days}`, unit: '天' },
+  { label: '总投入', value: `${stats.hours}`, unit: '小时' },
+  { label: '练习题', value: `${stats.drills}`, unit: '道' },
+];
+---
+
+<aside class="panel">
+  <a class="brand" href="/">🗄️ {site.title}</a>
+
+  <dl class="stats">
+    {
+      cells.map((c) => (
+        <div class="stat">
+          <dt>{c.label}</dt>
+          <dd>
+            {c.value}
+            <small>{c.unit}</small>
+          </dd>
+        </div>
+      ))
+    }
+  </dl>
+
+  <div class="meter">
+    <div class="meter-head">
+      <span>整体进度</span>
+      <strong data-progress-label>0 / {stats.days} 天 · 0%</strong>
+    </div>
+    <div class="track"><div class="fill" data-progress-fill></div></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" data-action="toggle-view">精简视图</button>
+    <button class="btn" data-action="llm-settings">出题设置</button>
+    <button class="btn" data-action="export-progress">导出进度</button>
+    <label class="btn as-label">
+      导入进度
+      <input type="file" accept="application/json" data-action="import-progress" hidden />
+    </label>
+    <button class="btn" data-action="reset-progress">重置</button>
+  </div>
+</aside>
+
+<style>
+  .panel {
+    position: sticky;
+    top: 24px;
+    display: grid;
+    gap: 18px;
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+  }
+
+  .brand {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--ink);
+    text-decoration: none;
+    letter-spacing: -0.01em;
+  }
+
+  .brand:hover {
+    color: var(--accent);
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 0;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 10px 12px;
+  }
+
+  .stat dt {
+    font-family: var(--f-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 2px;
+  }
+
+  .stat dd {
+    margin: 0;
+    font-family: var(--f-display);
+    font-size: 1.2rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+
+  .stat dd small {
+    font-family: var(--f-body);
+    font-size: 0.74rem;
+    color: var(--ink-2);
+    font-weight: 500;
+    margin-left: 2px;
+  }
+
+  .meter {
+    display: grid;
+    gap: 6px;
+  }
+
+  .meter-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    color: var(--ink-2);
+  }
+
+  .meter-head strong {
+    color: var(--ink);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .track {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 99px;
+    overflow: hidden;
+    border: 1px solid var(--line-soft);
+  }
+
+  .fill {
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    border-radius: 99px;
+    transition: width 0.35s ease;
+  }
+
+  .actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .as-label {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  @media (max-width: 1100px) {
+    .panel {
+      position: static;
+    }
+  }
+</style>

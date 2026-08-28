@@ -1,0 +1,64 @@
+---
+import { TABLES, DOCKER_SETUP, PSQL_COMMANDS } from '../data/schema';
+import { setupNotes } from '../data/meta';
+
+// 在 frontmatter 里把整段代码块拼成 HTML 字符串，比在模板里嵌套三元和括号可读得多
+// （表定义里的 `(` `)` 会让 JSX 解析器犯迷糊）。内容全是本仓库的常量，没有外部输入。
+const comment = (s: string) => `<span class="c">${s}</span>`;
+
+const tableLines = TABLES.map(
+  (t) => `${t.name}(${t.columns})${t.note ? comment(`  -- ${t.note}`) : ''}`,
+).join('\n');
+
+const codeBlock = [
+  comment('# 起一个 PostgreSQL 16（最省事，不污染本机）'),
+  DOCKER_SETUP,
+  '',
+  comment('-- 练习库表结构（随业务逐张上线，D 号见注释；D01 只建 orders 一张）'),
+  tableLines,
+  '',
+  comment('# psql 必会的 6 个元命令'),
+  PSQL_COMMANDS,
+].join('\n');
+---
+
+<section id="setup">
+  <div class="section-head">
+    <div class="kicker">Day 0 · 开课前</div>
+    <h2>环境与练习数据集</h2>
+    <p>
+      整个计划都在同一套自建电商库上练，但表不是一天建成的--它们随剧情逐张上线：老板的订单表、运营导来的用户和商品、增长团队的登录日志、支付模块的流水。到面试时，这就是一个你能从头讲到尾的项目经历。
+    </p>
+  </div>
+
+  <div class="card pad">
+    <pre set:html={codeBlock} />
+
+    <div class="cols notes">
+      {
+        setupNotes.map((n) => (
+          <div class="box">
+            <h4>{n.title}</h4>
+            <p set:html={n.body} />
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .notes {
+    margin-top: 18px;
+  }
+
+  .box h4 {
+    font-size: 1rem;
+    margin-bottom: 6px;
+  }
+
+  .box p {
+    color: var(--ink-2);
+    font-size: 0.88rem;
+  }
+</style>

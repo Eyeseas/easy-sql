@@ -1,0 +1,131 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import SidePanel from '../../components/SidePanel.astro';
+import WeekRail from '../../components/WeekRail.astro';
+import DayFocus from '../../components/DayFocus.astro';
+import { curriculum, findDay } from '../../data';
+import { tablesForDay } from '../../data/schema';
+import { site } from '../../data/meta';
+
+export function getStaticPaths() {
+  // 从「周 -> 天」结构展开，week 天然非空，不用 weekOfDay 再找一遍
+  return curriculum.flatMap((week) =>
+    week.days.map((day) => ({ params: { no: String(day.no) }, props: { day, week } })),
+  );
+}
+
+const { day, week } = Astro.props;
+const dd = String(day.no).padStart(2, '0');
+const prev = findDay(day.no - 1);
+const next = findDay(day.no + 1);
+const pd = (n?: number) => String(n ?? 0).padStart(2, '0');
+
+// 出题上下文只带当天（learn/drill/pass/brief），浏览器直连出题用，见 scripts/llm.ts
+const genContext = [
+  {
+    no: day.no,
+    title: day.title,
+    brief: day.brief,
+    learn: day.learn,
+    drill: day.drill,
+    pass: day.pass,
+    weekNo: week.no,
+    weekTitle: week.title,
+  },
+];
+// D01 只建 orders 一张表（其余的随业务逐周上线），结构直接放在这一页，不用跳回总览
+const schemaLines = tablesForDay(day.no)
+  .map((t) => `${t.name}(${t.columns})${t.note ? `  -- ${t.note}` : ''}`)
+  .join('\n');
+---
+
+<Layout title={`D${dd} ${day.title} · ${site.title}`} description={`第 ${day.no} 天：${day.title}`}>
+  <div class="wrap shell">
+    <WeekRail current={week.no} anchorBase="/" />
+
+    <main>
+      <nav class="crumbs">
+        <a href="/">总览</a>
+        <span>/</span>
+        <a href={`/week/${week.no}`}>W{week.no} {week.short}</a>
+        <span>/</span>
+        <span>D {dd}</span>
+      </nav>
+
+      <DayFocus day={day} week={week} />
+
+      {
+        day.no === 1 && (
+          <section class="card pad schema">
+            <div class="kicker">今天只建一张表 · orders</div>
+            <pre>{schemaLines}</pre>
+            <p class="more">
+              公司此刻的全部家当就是老板发来的这张订单表，其余 6 张会在后面几周随业务逐张上线（见{' '}
+              <a href="/#setup">总览 · 环境与数据集</a>
+              ）。字段类型自己定--选类型本身就是今天的功课。
+            </p>
+          </section>
+        )
+      }
+
+      <nav class="pager">
+        {
+          prev ? (
+            <a class="btn" href={`/day/${prev.no}`}>
+              ← D{pd(prev.no)} {prev.title}
+            </a>
+          ) : (
+            <a class="btn" href={`/week/${week.no}`}>
+              ← 返回本周
+            </a>
+          )
+        }
+        {
+          next ? (
+            <a class="btn" href={`/day/${next.no}`}>
+              D{pd(next.no)} {next.title}{' ->'}
+            </a>
+          ) : (
+            <a class="btn" href="/">
+              56 天完结，返回总览{' ->'}
+            </a>
+          )
+        }
+      </nav>
+    </main>
+
+    <SidePanel />
+  </div>
+
+  <script type="application/json" id="gen-context" set:html={JSON.stringify(genContext)} is:inline />
+</Layout>
+
+<style>
+  .crumbs {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    color: var(--ink-3);
+  }
+
+  .crumbs a {
+    color: var(--ink-2);
+    text-decoration: none;
+  }
+
+  .crumbs a:hover {
+    color: var(--accent);
+  }
+
+  .schema {
+    display: grid;
+    gap: 12px;
+  }
+
+  .schema .more {
+    color: var(--ink-3);
+    font-size: 0.82rem;
+  }
+</style>

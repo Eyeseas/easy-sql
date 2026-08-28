@@ -1,0 +1,83 @@
+/*
+ * 设计令牌。三态主题：
+ *   :root                                    → 亮色（默认，也是 system 未标记时的底）
+ *   @media (prefers-color-scheme: dark)      → 跟随系统暗色（用 :not([data-theme="light"]) 让显式亮色能覆盖）
+ *   :root[data-theme="dark"]                 → 显式选暗色
+ * 规则：颜色只在这三处定义，组件里一律用 var()，不准把颜色写死在 media query 里。
+ */
+
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #edf1f5;
+  --ink: #131c25;
+  --ink-2: #4a5a6c;
+  --ink-3: #7c8b9b;
+  --line: #d8e0e8;
+  --line-soft: #e7edf2;
+  --accent: #1b5a87;
+  --accent-strong: #12405f;
+  --accent-soft: #e0ebf4;
+  --amber: #8b5712;
+  --amber-soft: #f5ead8;
+  --green: #26624c;
+  --green-soft: #ddebe4;
+  --danger: #9b3232;
+  --danger-soft: #f6e2e2;
+  --shadow: 0 1px 2px rgba(19, 28, 37, 0.05), 0 8px 24px -18px rgba(19, 28, 37, 0.35);
+
+  --f-display: 'Newsreader', Georgia, 'Songti SC', serif;
+  --f-body: 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+
+  --step-0: 0.9375rem;
+  --step-1: 1.0625rem;
+  --step-3: 1.75rem;
+  --step-4: 2.6rem;
+
+  --wrap: 1440px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0e141a;
+    --surface: #151d25;
+    --surface-2: #1b242d;
+    --ink: #e7edf3;
+    --ink-2: #9babbb;
+    --ink-3: #75879a;
+    --line: #28343f;
+    --line-soft: #1f2a34;
+    --accent: #79b2de;
+    --accent-strong: #a6cdea;
+    --accent-soft: #152f40;
+    --amber: #dca85c;
+    --amber-soft: #31270f;
+    --green: #7fc5a4;
+    --green-soft: #14302a;
+    --danger: #e08585;
+    --danger-soft: #331818;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -20px rgba(0, 0, 0, 0.9);
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0e141a;
+  --surface: #151d25;
+  --surface-2: #1b242d;
+  --ink: #e7edf3;
+  --ink-2: #9babbb;
+  --ink-3: #75879a;
+  --line: #28343f;
+  --line-soft: #1f2a34;
+  --accent: #79b2de;
+  --accent-strong: #a6cdea;
+  --accent-soft: #152f40;
+  --amber: #dca85c;
+  --amber-soft: #31270f;
+  --green: #7fc5a4;
+  --green-soft: #14302a;
+  --danger: #e08585;
+  --danger-soft: #331818;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -20px rgba(0, 0, 0, 0.9);
+}

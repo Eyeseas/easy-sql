@@ -1,0 +1,105 @@
+---
+import { timebox, rules } from '../data/meta';
+import { allDays } from '../data';
+import { PHASES } from '../types/curriculum';
+
+// 时间盒条按全部 56 天的平均配比画，不写死数字
+const avg = PHASES.map((_, i) =>
+  Math.round(allDays.reduce((sum, d) => sum + (d.split[i] ?? 0), 0) / allDays.length),
+);
+---
+
+<section id="method">
+  <div class="section-head">
+    <div class="kicker">怎么用</div>
+    <h2>每天 2 小时怎么花</h2>
+    <p>
+      固定配比，不要临时决定。<b>练的时间必须多于看的时间</b
+      >——面试考的是你能不能当场写出来，不是你读过多少。下面是 56
+      天的平均配比，每天的实际分钟数写在各自的卡片上。
+    </p>
+  </div>
+
+  <div class="card pad">
+    <div class="tb">
+      {
+        PHASES.map((p, i) => (
+          <div class={`seg s${i}`} style={`flex: ${avg[i]}`}>
+            {avg[i]} min · {p.label}
+          </div>
+        ))
+      }
+    </div>
+
+    <div class="cols">
+      {
+        timebox.map((t) => (
+          <div class="box">
+            <h4>{t.label}</h4>
+            <p set:html={t.body} />
+          </div>
+        ))
+      }
+    </div>
+  </div>
+
+  <div class="card pad rules">
+    <ul class="clean">{rules.map((r) => <li set:html={r} />)}</ul>
+  </div>
+</section>
+
+<style>
+  .tb {
+    display: flex;
+    height: 40px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    margin-bottom: 14px;
+  }
+
+  .seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--line);
+    white-space: nowrap;
+    padding: 0 8px;
+    overflow: hidden;
+  }
+
+  .seg:last-child {
+    border-right: 0;
+  }
+
+  .s0 {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+
+  .s1 {
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  .s2 {
+    background: var(--amber-soft);
+    color: var(--amber);
+  }
+
+  .box h4 {
+    font-size: 1rem;
+    margin-bottom: 6px;
+  }
+
+  .box p {
+    color: var(--ink-2);
+    font-size: 0.88rem;
+  }
+
+  .rules {
+    margin-top: 16px;
+  }
+</style>

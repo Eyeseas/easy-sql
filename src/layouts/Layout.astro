@@ -1,0 +1,71 @@
+---
+import '../styles/tokens.css';
+import '../styles/base.css';
+import StudyTimerBar from '../components/StudyTimerBar.astro';
+import LlmSettings from '../components/LlmSettings.astro';
+import { curriculum } from '../data';
+import { site } from '../data/meta';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = 'PostgreSQL 面试向的八周学习计划，每天 2 小时' } = Astro.props;
+
+// 计时器需要在客户端知道每天的分钟配比，用一个 JSON script 标签传过去，
+// 避免把课程数据打进 JS bundle。放在 Layout 里全站共享：在任何一页都能
+// 恢复/驱动其他天的计时，进度侧栏的周计数也靠它。
+const dayMeta = curriculum.flatMap((w) =>
+  w.days.map((d) => ({ no: d.no, title: d.title, split: d.split, week: w.no })),
+);
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🗄️</text></svg>"
+    />
+  </head>
+  <body>
+    <slot />
+
+    <footer class="wrap">
+      <span>{site.footer}</span>
+      <span>进度与计时保存在本地浏览器</span>
+    </footer>
+
+    <StudyTimerBar />
+    <LlmSettings />
+
+    <script type="application/json" id="day-meta" set:html={JSON.stringify(dayMeta)} is:inline />
+    <script>
+      import '../scripts/main';
+    </script>
+  </body>
+</html>
+
+<style>
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 26px 0 64px;
+    color: var(--ink-3);
+    font-size: 0.82rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+</style>

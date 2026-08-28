@@ -1,0 +1,15 @@
+---
+import { deliverables } from '../data/meta';
+---
+
+<section id="output">
+  <div class="section-head">
+    <div class="kicker">交付</div>
+    <h2>八周后你手上应该有这些</h2>
+    <p>计划的价值不在于「学完了」，而在于留下能拿出来给面试官看的东西。</p>
+  </div>
+
+  <div class="card pad">
+    <ul class="clean">{deliverables.map((d) => <li set:html={d} />)}</ul>
+  </div>
+</section>
