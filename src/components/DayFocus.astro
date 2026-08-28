@@ -242,10 +242,11 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
 
   /* ---------- 学 / 练 ---------- */
 
+  /* 学/练 上下排布 */
   .f-cols {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
-    gap: 30px;
+    grid-template-columns: 1fr;
+    gap: 26px;
     align-items: start;
   }
 
@@ -394,11 +395,6 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
   @media (max-width: 900px) {
     .f-head {
       padding: 20px 18px;
-    }
-
-    .f-cols {
-      grid-template-columns: 1fr;
-      gap: 18px;
     }
 
     .f-col {
