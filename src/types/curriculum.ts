@@ -21,6 +21,14 @@ export const PHASES = [
 
 export type PhaseKey = (typeof PHASES)[number]['key'];
 
+/** 「练」栏的参考答案：可直接运行的 SQL（或命令）+ 一句话要点 */
+export interface DrillAnswer {
+  /** 可直接在 PostgreSQL 16 上运行的参考 SQL / psql 命令；纯解释题可省略 */
+  sql?: string;
+  /** 一句话点破要点 / 预期结果 */
+  note?: string;
+}
+
 export interface Day {
   /** 1–56，全局连续 */
   no: number;
@@ -33,6 +41,8 @@ export interface Day {
   learn: readonly string[];
   /** 「练」栏编号任务。允许内联 <code> / <b> */
   drill: readonly string[];
+  /** 与 drill 按下标对应的参考答案，日页折叠展示。没有答案的题留 undefined */
+  drillAnswers?: readonly (DrillAnswer | undefined)[];
   /** 当天过关标准，一句话 */
   pass: string;
   /** 覆盖「学 / 练」两栏的标题，用于测评日（如「规则」「测评 + 归因」） */

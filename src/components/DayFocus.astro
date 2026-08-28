@@ -54,7 +54,24 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     <section class="f-col">
       <h2 class="drill">{drillLabel}</h2>
       <ol>
-        {day.drill.map((x) => <li set:html={x} />)}
+        {
+          day.drill.map((x, i) => (
+            <li>
+              <div set:html={x} />
+              {day.drillAnswers?.[i] && (
+                <details class="drill-ans">
+                  <summary>参考答案</summary>
+                  {day.drillAnswers[i]!.note && <p class="ans-note">{day.drillAnswers[i]!.note}</p>}
+                  {day.drillAnswers[i]!.sql && (
+                    <pre class="ans-sql">
+                      <code>{day.drillAnswers[i]!.sql}</code>
+                    </pre>
+                  )}
+                </details>
+              )}
+            </li>
+          ))
+        }
       </ol>
     </section>
   </div>
@@ -277,6 +294,54 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     color: var(--ink-3);
     font-family: var(--f-mono);
     font-size: 0.8em;
+  }
+
+  /* 折叠参考答案：默认收起，卡住 8 分钟再点开（课程规则之一） */
+  .drill-ans {
+    margin-top: 8px;
+  }
+
+  .drill-ans summary {
+    cursor: pointer;
+    user-select: none;
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    width: max-content;
+  }
+
+  .drill-ans summary:hover {
+    color: var(--accent);
+  }
+
+  .drill-ans[open] summary {
+    color: var(--amber);
+    margin-bottom: 8px;
+  }
+
+  .ans-note {
+    margin: 0 0 8px;
+    font-size: 0.88rem;
+    line-height: 1.7;
+    color: var(--ink-2);
+  }
+
+  .ans-sql {
+    margin: 0;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: 2px;
+    overflow-x: auto;
+  }
+
+  .ans-sql code {
+    font-family: var(--f-mono);
+    font-size: 0.8rem;
+    line-height: 1.65;
+    color: var(--ink-2);
+    white-space: pre;
   }
 
   /* ---------- 过关 / 工具 ---------- */

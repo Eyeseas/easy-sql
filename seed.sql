@@ -16,6 +16,9 @@
 --  会被优化成整条语句只求值一次的 Init Plan：100 万行拿到的是同一个随机数。
 --  想每行都随机：放 SELECT 列表里，或放进 MATERIALIZED CTE。
 --
+--  【时间锚点】所有日期都用 current_date 相对偏移（如「近 90 天」「两年前到
+--  四个月前」），不管哪天灌数、灌完过多少天，数据分布都成立，练习题不失效。
+--
 --  【user_id 的戏法】orders.user_id 是 uuid，但 D01 时 users 表还没上线。
 --  这里按编号 1~10000 生成确定性 uuid（全零前缀 + 12 位左补零的编号），
 --  §B 建 users 时用同一映射当主键，订单才能 join 上用户。
@@ -43,7 +46,7 @@ SELECT ('00000000-0000-0000-0000-' || lpad((1 + floor(random() * 10000))::int::t
        CASE WHEN r.s < 0.70 THEN r.ts + (random() * 60) * interval '1 minute' END
 FROM (
   SELECT random() AS s, random() AS a,
-         timestamp '2026-08-27' - (random() * 90) * interval '1 day' AS ts
+         current_date - (random() * 90) * interval '1 day' AS ts
   FROM generate_series(1, 50000) g
 ) r;
 
@@ -67,7 +70,7 @@ SELECT ('00000000-0000-0000-0000-' || lpad(g::text, 12, '0'))::uuid,
        'user' || g || '@example.com',
        CASE WHEN random() < 0.02 THEN NULL
             ELSE (ARRAY['北京','上海','广州','深圳','杭州','成都'])[1 + floor(random() * 6)::int] END,
-       timestamp '2025-09-01' + (random() * 360) * interval '1 day'
+       current_date - 360 + (random() * 360) * interval '1 day'
 FROM generate_series(1, 10000) g;
 
 -- ② products：500（类目还没上线，category_id 留空）
@@ -76,7 +79,7 @@ SELECT '商品' || g,
        NULL,
        round((10 + random() * 990)::numeric, 2),
        (random() * 500)::int,
-       timestamp '2025-09-01' + (random() * 360) * interval '1 day'
+       current_date - 360 + (random() * 360) * interval '1 day'
 FROM generate_series(1, 500) g;
 
 -- ③ order_items：每单 1~4 件（随机数都在 MATERIALIZED CTE 里逐行掷好）
@@ -134,7 +137,7 @@ SET category_id = (SELECT id FROM categories
 
 WITH u AS (
   SELECT id,
-         timestamp '2026-05-29' + (random() * 60) * interval '1 day' AS win_start,
+         current_date - 90 + (random() * 60) * interval '1 day' AS win_start,
          (10 + floor(random() * 70))::int AS win_days,
          (10 + floor(random() * 40))::int AS n_logins
   FROM users
@@ -166,7 +169,7 @@ FROM orders o WHERE o.status = 2 AND o.paid_at IS NOT NULL;
 WITH r AS MATERIALIZED (
   SELECT ('00000000-0000-0000-0000-' || lpad((1 + floor(random() * 10000))::int::text, 12, '0'))::uuid AS ui,
          floor(random() * 10)::int AS n,
-         timestamp '2024-08-27' + (random() * 610) * interval '1 day' AS ts
+         current_date - 730 + (random() * 610) * interval '1 day' AS ts
   FROM generate_series(1, 950000) g
 )
 INSERT INTO orders (user_id, status, total_amount, created_at, paid_at)
@@ -206,7 +209,7 @@ WHERE o.status = 2 AND o.paid_at IS NOT NULL
 -- ⑤ 登录日志补 20 万条历史（散布在两年里）
 WITH r AS MATERIALIZED (
   SELECT 1 + floor(random() * 10000)::int AS ui,
-         timestamp '2024-09-01' + (random() * 600) * interval '1 day' AS ts
+         current_date - 720 + (random() * 600) * interval '1 day' AS ts
   FROM generate_series(1, 200000) g
 )
 INSERT INTO user_logins (user_id, login_at, ip)
