@@ -1,8 +1,11 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import node from '@astrojs/node';
 
-// 纯静态站点：LLM 出题由浏览器直连用户配置的端点（见 src/scripts/llm.ts），
-// 没有任何服务端代码，可以部署到任意静态托管。
+// 静态优先：页面全部预渲染成静态 HTML，只有 /api/llm（LLM 出题代理，见
+// src/pages/api/llm.ts）是 on-demand 路由，需要 node adapter。
+// 部署：astro build 后跑 ./dist/server/entry.mjs。
 export default defineConfig({
   output: 'static',
+  adapter: node({ mode: 'standalone' }),
 });

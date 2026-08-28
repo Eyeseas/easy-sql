@@ -1,10 +1,10 @@
 /**
- * 浏览器直连 LLM 出题。没有服务端：端点类型/地址/模型/key 存在 localStorage，
- * 默认值来自构建时 .env 的 PUBLIC_LLM_*（会被打进前端产物，只在自己部署时填 key）。
+ * LLM 出题。端点类型/地址/模型/key 存在 localStorage，默认值来自构建时 .env 的
+ * PUBLIC_LLM_*（会被打进前端产物，只在自己部署时填 key）。
  *
- * 两种端点：
- *  - anthropic：原生 /v1/messages（带浏览器直连专用头）
- *  - openai：OpenAI 兼容 /chat/completions（各种中转、one-api、OpenRouter 都是这套）
+ * 实际转发由同站点的服务端代理 /api/llm 完成（见 src/pages/api/llm.ts）：各种
+ * 中转 / OpenAI 兼容端点通常不带 CORS 头，浏览器直连会跨域失败，服务端没有这
+ * 个限制。key 仍然只存在浏览器里，代理只透传不落盘。
  */
 import { z } from 'zod';
 import { schemaForPrompt } from '../data/schema';
@@ -121,77 +121,18 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, '');
 }
 
-/* ---------- 两种端点的 HTTP 调用 ---------- */
+/* ---------- 调服务端代理 ---------- */
 
-/** 用户可能把路径的一部分写进 baseUrl（…/v1、…/v1/messages），只补缺的后缀 */
-function joinUrl(base: string, path: string): string {
-  const b = base.trim().replace(/\/+$/, '');
-  if (b.endsWith(path)) return b;
-  if (path === '/v1/messages' && b.endsWith('/v1')) return `${b}/messages`;
-  return `${b}${path}`;
-}
-
-async function httpError(res: Response): Promise<string> {
-  let detail = '';
-  try {
-    const body = (await res.json()) as { error?: { message?: string } | string; message?: string };
-    const err = body.error;
-    detail = typeof err === 'string' ? err : (err?.message ?? body.message ?? '');
-  } catch {
-    /* 非 JSON 响应就算了 */
-  }
-  return `端点返回 ${res.status}${detail ? `：${detail}` : ''}`;
-}
-
-async function callAnthropic(cfg: LlmConfig, system: string, user: string): Promise<string> {
-  const res = await fetch(joinUrl(cfg.baseUrl, '/v1/messages'), {
+async function callViaProxy(cfg: LlmConfig, system: string, user: string): Promise<string> {
+  const res = await fetch('/api/llm', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': cfg.apiKey,
-      'anthropic-version': '2023-06-01',
-      // Anthropic 官方端点默认拒绝浏览器直连（防 key 泄露），这个头显式放开
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      max_tokens: 16000,
-      system,
-      messages: [{ role: 'user', content: user }],
-    }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...cfg, system, user }),
   });
-  if (!res.ok) throw new Error(await httpError(res));
-
-  const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
-  return (data.content ?? [])
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text ?? '')
-    .join('');
-}
-
-async function callOpenAI(cfg: LlmConfig, system: string, user: string): Promise<string> {
-  const res = await fetch(joinUrl(cfg.baseUrl, '/chat/completions'), {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      max_tokens: 8000,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(await httpError(res));
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  return data.choices?.[0]?.message?.content ?? '';
+  const data = (await res.json()) as { text?: string; error?: string };
+  if (!res.ok) throw new Error(data.error || `代理返回 ${res.status}`);
+  if (!data.text) throw new Error('端点没有返回内容，重试一次通常就好');
+  return data.text;
 }
 
 /* ---------- 解析与入口 ---------- */
@@ -210,7 +151,6 @@ export async function generateExercises(day: GenContextDay, count: number): Prom
   if (!cfg.apiKey.trim()) throw new Error('没有配置 API key，先点右上「出题设置」');
 
   const user = buildPrompt(day, count);
-  const text =
-    cfg.type === 'openai' ? await callOpenAI(cfg, SYSTEM, user) : await callAnthropic(cfg, SYSTEM, user);
+  const text = await callViaProxy(cfg, SYSTEM, user);
   return parseExercises(text);
 }
