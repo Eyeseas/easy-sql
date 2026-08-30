@@ -2,6 +2,7 @@
 import { readJSON, writeJSON } from './storage';
 import { generateExercises, isConfigured, type Exercise, type GenContextDay } from './llm';
 import { openLlmSettings } from './llmSettings';
+import { highlightSql } from '../utils/highlightSql';
 
 const KEY = 'sql8w.exercises.v1';
 
@@ -69,7 +70,7 @@ function renderList(host: HTMLElement, dayNo: number, list: Exercise[]): void {
         <li>
           <div class="gen-task">${escapeHtml(e.task)}</div>
           <details class="gen-fold"><summary>提示</summary><p>${escapeHtml(e.hint)}</p></details>
-          <details class="gen-fold"><summary>参考答案</summary><pre>${escapeHtml(e.referenceSql)}</pre></details>
+          <details class="gen-fold"><summary>参考答案</summary><pre class="sql-code">${highlightSql(e.referenceSql)}</pre></details>
           <div class="gen-check"><b>自查</b>${escapeHtml(e.checkpoint)}</div>
         </li>`,
         )

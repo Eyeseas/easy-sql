@@ -9,6 +9,31 @@ export const TAG_LABEL: Record<Tag, string> = {
   test: '测评',
 };
 
+/**
+ * 「学」栏的知识点小讲义：列表里只露出标题，点开看完整内容。
+ * 场景 / 讲解 / 例子 / 易错点四件套，保证每个知识点落到具体业务和可运行的 SQL 上。
+ */
+export interface LearnItem {
+  /** 知识点名称，列表里始终可见。允许内联 <code> / <b> */
+  title: string;
+  /** 场景引入：什么业务问题会把人带到这个知识点（对应当天剧情） */
+  scene?: string;
+  /** 具体讲解：讲人话，带结论和为什么。允许内联 <code> / <b> */
+  body: string;
+  /** 可直接运行的示例 SQL / 命令 */
+  sql?: string;
+  /** 易错点 / 面试追问点，一句话 */
+  pitfall?: string;
+}
+
+/** learn 数组兼容两种条目：老的一行式字符串，新的小讲义对象 */
+export type LearnEntry = string | LearnItem;
+
+/** 取条目的标题（列表摘要 / 出题上下文 / 统计共用） */
+export function learnTitle(x: LearnEntry): string {
+  return typeof x === 'string' ? x : x.title;
+}
+
 /** [学, 练, 盘] 三段分钟数，合计应为 120 */
 export type TimeSplit = readonly [learn: number, drill: number, review: number];
 
@@ -37,8 +62,8 @@ export interface Day {
   brief?: string;
   tags?: readonly Tag[];
   split: TimeSplit;
-  /** 「学」栏要点。允许内联 <code> / <b> */
-  learn: readonly string[];
+  /** 「学」栏：一行式字符串或小讲义对象（见 LearnItem）。 */
+  learn: readonly LearnEntry[];
   /** 「练」栏编号任务。允许内联 <code> / <b> */
   drill: readonly string[];
   /** 与 drill 按下标对应的参考答案，日页折叠展示。没有答案的题留 undefined */

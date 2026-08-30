@@ -1,0 +1,170 @@
+---
+import type { LearnEntry } from '../types/curriculum';
+import { highlightSql } from '../utils/highlightSql';
+
+/**
+ * 「学」栏列表：字符串条目原样一行；小讲义对象渲染成折叠块，
+ * 只露标题，点开看 场景 / 讲解 / 示例 / 易错点。两处布局共用（DayCard / DayFocus）。
+ */
+interface Props {
+  items: readonly LearnEntry[];
+}
+
+const { items } = Astro.props;
+---
+
+<ul class="learn-list">
+  {
+    items.map((x) =>
+      typeof x === 'string' ? (
+        <li set:html={x} />
+      ) : (
+        <li class="topic">
+          <details>
+            <summary set:html={x.title} />
+            <div class="note">
+              {x.scene && (
+                <p class="row scene">
+                  <b>场景</b>
+                  <span set:html={x.scene} />
+                </p>
+              )}
+              <p class="row body">
+                <b>讲解</b>
+                <span set:html={x.body} />
+              </p>
+              {x.sql && (
+                <div class="row sql">
+                  <b>试试</b>
+                  <pre class="sql-code" set:html={highlightSql(x.sql)} />
+                </div>
+              )}
+              {x.pitfall && (
+                <p class="row pitfall">
+                  <b>易错</b>
+                  <span set:html={x.pitfall} />
+                </p>
+              )}
+            </div>
+          </details>
+        </li>
+      ),
+    )
+  }
+</ul>
+
+<style>
+  .learn-list {
+    margin: 0;
+    padding-left: 1.15em;
+    display: grid;
+    gap: 8px;
+  }
+
+  .learn-list li {
+    color: var(--ink-2);
+    font-size: 0.92rem;
+    line-height: 1.7;
+  }
+
+  .learn-list li::marker {
+    color: var(--ink-3);
+    font-family: var(--f-mono);
+    font-size: 0.78em;
+  }
+
+  .topic details summary {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .topic details summary:hover {
+    color: var(--accent);
+  }
+
+  /* 展开时标题左侧给个记号，收起时回到列表原样 */
+  .topic details summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .topic details summary::before {
+    content: '+';
+    display: inline-block;
+    width: 1em;
+    margin-left: -1em;
+    color: var(--ink-3);
+    font-family: var(--f-mono);
+    transition: transform 0.12s ease;
+  }
+
+  .topic details[open] summary::before {
+    content: '−';
+    color: var(--accent);
+  }
+
+  .note {
+    margin: 8px 0 2px;
+    padding: 12px 15px;
+    background: var(--surface-2);
+    border-left: 2px solid var(--accent);
+    border-radius: 2px;
+    display: grid;
+    gap: 9px;
+    font-size: 0.87rem;
+    line-height: 1.68;
+    color: var(--ink-2);
+  }
+
+  .row {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 10px;
+    align-items: baseline;
+  }
+
+  .row b {
+    font-family: var(--f-mono);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  .row.scene b {
+    color: var(--amber);
+  }
+
+  .row.pitfall b {
+    color: var(--danger);
+  }
+
+  .row.pitfall span {
+    padding: 6px 10px;
+    margin: -6px 0 -6px -10px;
+    background: var(--danger-soft);
+    border-radius: 2px;
+  }
+
+  .row.pitfall span {
+    color: var(--ink-2);
+  }
+
+  .row.sql {
+    align-items: start;
+  }
+
+  .row.sql pre {
+    margin: 0;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 2px;
+    overflow-x: auto;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--ink-2);
+    white-space: pre;
+  }
+</style>

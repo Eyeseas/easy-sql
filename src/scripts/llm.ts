@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 import { schemaForPrompt } from '../data/schema';
+import { learnTitle, type LearnEntry } from '../types/curriculum';
 
 export type LlmEndpointType = 'anthropic' | 'openai';
 
@@ -26,7 +27,7 @@ export interface GenContextDay {
   title: string;
   /** 业务剧情一句话，可为空（老数据） */
   brief?: string;
-  learn: string[];
+  learn: LearnEntry[];
   drill: string[];
   pass: string;
   weekNo: number;
@@ -38,7 +39,9 @@ function defaults(): LlmConfig {
   const type = env.PUBLIC_LLM_TYPE === 'openai' ? 'openai' : 'anthropic';
   return {
     type,
-    baseUrl: env.PUBLIC_LLM_BASE_URL || (type === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com'),
+    baseUrl:
+      env.PUBLIC_LLM_BASE_URL ||
+      (type === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com'),
     model: env.PUBLIC_LLM_MODEL || (type === 'openai' ? 'gpt-5' : 'claude-opus-5'),
     apiKey: env.PUBLIC_LLM_API_KEY || '',
   };
@@ -105,7 +108,7 @@ ${schemaForPrompt(day.no)}
 当前进度：第 ${day.weekNo} 周《${day.weekTitle}》，第 ${day.no} 天《${day.title}》。${day.brief ? `\n当天的业务剧情：${stripTags(day.brief)}` : ''}
 
 这一天要掌握的知识点：
-${day.learn.map((x) => `- ${stripTags(x)}`).join('\n')}
+${day.learn.map((x) => `- ${learnForPrompt(x)}`).join('\n')}
 
 这一天已有的练习任务（不要重复这些）：
 ${day.drill.map((x, i) => `${i + 1}. ${stripTags(x)}`).join('\n')}
@@ -119,6 +122,16 @@ ${day.drill.map((x, i) => `${i + 1}. ${stripTags(x)}`).join('\n')}
 /** 课程文案里带 <code>/<b> 标签，喂给模型前去掉，省 token 也避免它学着输出 HTML */
 function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, '');
+}
+
+/** 小讲义展开成一行文字：标题 + 场景 + 讲解 + 易错点，出题贴着当天实际教的东西走 */
+function learnForPrompt(x: LearnEntry): string {
+  if (typeof x === 'string') return stripTags(x);
+  const parts = [stripTags(learnTitle(x))];
+  if (x.scene) parts.push(`场景：${stripTags(x.scene)}`);
+  parts.push(stripTags(x.body));
+  if (x.pitfall) parts.push(`易错：${stripTags(x.pitfall)}`);
+  return parts.join(' ');
 }
 
 /* ---------- 调服务端代理 ---------- */

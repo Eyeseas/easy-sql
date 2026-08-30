@@ -1,6 +1,7 @@
 ---
 import type { Day } from '../types/curriculum';
 import { TAG_LABEL, PHASES } from '../types/curriculum';
+import LearnList from './LearnList.astro';
 
 interface Props {
   day: Day;
@@ -25,11 +26,20 @@ const drillLabel = day.drillLabel ?? `练 · ${day.split[1]} min`;
   </label>
 
   <div class="detail">
-    {day.brief && <div class="brief"><b>剧情</b><span set:html={day.brief} /></div>}
+    {
+      day.brief && (
+        <div class="brief">
+          <>
+            <b>剧情</b>
+            <span set:html={day.brief} />
+          </>
+        </div>
+      )
+    }
 
     <div>
       <div class="col-h learn">{learnLabel}</div>
-      <ul>{day.learn.map((x) => <li set:html={x} />)}</ul>
+      <LearnList items={day.learn} />
     </div>
 
     <div>
@@ -157,7 +167,6 @@ const drillLabel = day.drillLabel ?? `练 · ${day.split[1]} min`;
     color: var(--amber);
   }
 
-  .detail ul,
   .detail ol {
     margin: 0;
     padding-left: 1.15em;

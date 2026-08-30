@@ -1,6 +1,8 @@
 ---
 import type { Day, Week } from '../types/curriculum';
 import { TAG_LABEL, PHASES } from '../types/curriculum';
+import { highlightSql } from '../utils/highlightSql';
+import LearnList from './LearnList.astro';
 
 interface Props {
   day: Day;
@@ -46,9 +48,7 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
   <div class="f-cols">
     <section class="f-col">
       <h2 class="learn">{learnLabel}</h2>
-      <ul>
-        {day.learn.map((x) => <li set:html={x} />)}
-      </ul>
+      <LearnList items={day.learn} />
     </section>
 
     <section class="f-col">
@@ -63,9 +63,10 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
                   <summary>参考答案</summary>
                   {day.drillAnswers[i]!.note && <p class="ans-note">{day.drillAnswers[i]!.note}</p>}
                   {day.drillAnswers[i]!.sql && (
-                    <pre class="ans-sql">
-                      <code>{day.drillAnswers[i]!.sql}</code>
-                    </pre>
+                    <pre
+                      class="ans-sql sql-code"
+                      set:html={highlightSql(day.drillAnswers[i]!.sql!)}
+                    />
                   )}
                 </details>
               )}
@@ -277,7 +278,6 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     color: var(--amber);
   }
 
-  .f-col ul,
   .f-col ol {
     margin: 0;
     padding-left: 1.25em;
@@ -285,16 +285,21 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     gap: 12px;
   }
 
-  .f-col li {
+  .f-col ol li {
     color: var(--ink-2);
     font-size: 1rem;
     line-height: 1.75;
   }
 
-  .f-col li::marker {
+  .f-col ol li::marker {
     color: var(--ink-3);
     font-family: var(--f-mono);
     font-size: 0.8em;
+  }
+
+  /* LearnList 是子组件，样式隔在作用域外；专注页是主阅读区，讲义字号放大一档 */
+  :global(.f-col h2.learn ~ .learn-list li) {
+    font-size: 1rem;
   }
 
   /* 折叠参考答案：默认收起，卡住 8 分钟再点开（课程规则之一） */
@@ -335,10 +340,6 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     border: 1px solid var(--line-soft);
     border-radius: 2px;
     overflow-x: auto;
-  }
-
-  .ans-sql code {
-    font-family: var(--f-mono);
     font-size: 0.8rem;
     line-height: 1.65;
     color: var(--ink-2);

@@ -64,6 +64,64 @@ pre {
   color: var(--ink);
 }
 
+pre > code {
+  display: block;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  color: inherit;
+  tab-size: 2;
+}
+
+.sql-code .token.comment,
+.sql-code .token.prolog,
+.sql-code .token.doctype,
+.sql-code .token.cdata {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+
+.sql-code .token.keyword,
+.sql-code .token.important {
+  color: var(--syntax-keyword);
+  font-weight: 500;
+}
+
+.sql-code .token.function,
+.sql-code .token.class-name,
+.sql-code .token.builtin {
+  color: var(--syntax-function);
+}
+
+.sql-code .token.string,
+.sql-code .token.char,
+.sql-code .token.attr-value,
+.sql-code .token.inserted {
+  color: var(--syntax-string);
+}
+
+.sql-code .token.number,
+.sql-code .token.boolean,
+.sql-code .token.constant,
+.sql-code .token.symbol,
+.sql-code .token.property {
+  color: var(--syntax-number);
+}
+
+.sql-code .token.operator,
+.sql-code .token.entity,
+.sql-code .token.url,
+.sql-code .token.regex,
+.sql-code .token.variable {
+  color: var(--syntax-operator);
+}
+
+.sql-code .token.punctuation {
+  color: var(--syntax-punctuation);
+}
+
 pre .c {
   color: var(--ink-3);
 }
@@ -202,8 +260,7 @@ ul.clean li b {
 .shell {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr) 250px;
-  grid-template-areas:
-    'rail main aside';
+  grid-template-areas: 'rail main aside';
   gap: 36px;
   padding: 48px 0 96px;
   align-items: start;
