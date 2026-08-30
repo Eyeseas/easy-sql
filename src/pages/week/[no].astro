@@ -28,7 +28,10 @@ const genContext = week.days.map((d) => ({
 }));
 ---
 
-<Layout title={`W${no} ${week.title} · ${site.title}`} description={`第 ${week.no} 周：${week.goal}`}>
+<Layout
+  title={`W${no} ${week.title} · ${site.title}`}
+  description={`第 ${week.no} 周：${week.goal}`}
+>
   <div class="wrap shell">
     <WeekRail current={week.no} anchorBase="/" />
 
@@ -64,5 +67,10 @@ const genContext = week.days.map((d) => ({
     <SidePanel />
   </div>
 
-  <script type="application/json" id="gen-context" set:html={JSON.stringify(genContext)} is:inline />
+  <script
+    type="application/json"
+    id="gen-context"
+    set:html={JSON.stringify(genContext)}
+    is:inline
+  />
 </Layout>

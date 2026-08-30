@@ -18,7 +18,9 @@ export function openLlmSettings(msg?: string): void {
 
   const cfg = loadConfig();
   const set = (name: string, v: string) => {
-    const field = dlg.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-llm-field="${name}"]`);
+    const field = dlg.querySelector<HTMLInputElement | HTMLSelectElement>(
+      `[data-llm-field="${name}"]`,
+    );
     if (field) field.value = v;
   };
   set('type', cfg.type);
@@ -26,7 +28,10 @@ export function openLlmSettings(msg?: string): void {
   set('model', cfg.model);
   set('apiKey', cfg.apiKey);
 
-  status(msg ?? `当前：${cfg.model} @ ${cfg.baseUrl}${cfg.apiKey ? '' : '（缺 key）'}`, !cfg.apiKey);
+  status(
+    msg ?? `当前：${cfg.model} @ ${cfg.baseUrl}${cfg.apiKey ? '' : '（缺 key）'}`,
+    !cfg.apiKey,
+  );
   dlg.hidden = false;
 }
 
@@ -56,7 +61,9 @@ export function initLlmSettings(): void {
 
   dlg.querySelector('[data-action="llm-save"]')?.addEventListener('click', () => {
     const get = (name: string) =>
-      dlg.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-llm-field="${name}"]`)?.value.trim() ?? '';
+      dlg
+        .querySelector<HTMLInputElement | HTMLSelectElement>(`[data-llm-field="${name}"]`)
+        ?.value.trim() ?? '';
 
     const cfg = {
       type: (get('type') === 'openai' ? 'openai' : 'anthropic') as LlmEndpointType,

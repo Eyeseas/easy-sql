@@ -21,7 +21,12 @@ export const TABLES: readonly TableDef[] = [
     note: 'D01 老板发来的订单导出，全课程第一张表',
     since: 1,
   },
-  { name: 'users', columns: 'id, name, email, city, created_at', note: 'D08 运营导来的用户表', since: 8 },
+  {
+    name: 'users',
+    columns: 'id, name, email, city, created_at',
+    note: 'D08 运营导来的用户表',
+    since: 8,
+  },
   {
     name: 'products',
     columns: 'id, name, category_id, price numeric(10,2), stock, created_at',

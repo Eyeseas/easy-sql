@@ -83,7 +83,8 @@ const schemaLines = tablesForDay(day.no)
         {
           next ? (
             <a class="btn" href={`/day/${next.no}`}>
-              D{pd(next.no)} {next.title}{' ->'}
+              D{pd(next.no)} {next.title}
+              {' ->'}
             </a>
           ) : (
             <a class="btn" href="/">
@@ -97,7 +98,12 @@ const schemaLines = tablesForDay(day.no)
     <SidePanel />
   </div>
 
-  <script type="application/json" id="gen-context" set:html={JSON.stringify(genContext)} is:inline />
+  <script
+    type="application/json"
+    id="gen-context"
+    set:html={JSON.stringify(genContext)}
+    is:inline
+  />
 </Layout>
 
 <style>
