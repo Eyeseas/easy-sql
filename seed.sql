@@ -92,7 +92,7 @@ WITH p AS (SELECT array_agg(id) AS ids, array_agg(price) AS prices FROM products
      )
 INSERT INTO order_items (order_id, product_id, qty, unit_price)
 SELECT o.id, p.ids[o.i], 1 + floor(random() * 3)::int,
-       round(p.prices[o.i] * (0.9 + random() * 0.2), 2)
+       round((p.prices[o.i] * (0.9 + random() * 0.2))::numeric, 2)
 FROM o CROSS JOIN LATERAL generate_series(1, o.n) k CROSS JOIN p;
 
 -- ④ orders.total_amount 对齐明细之和
@@ -123,10 +123,17 @@ INSERT INTO categories (name, parent_id)
 SELECT '子分类' || p.g, t.id
 FROM pick p JOIN tops t ON t.rn = p.rn;
 
--- 回填：每个商品随机挂一个二级类目（SET 里的子查询逐行求值，500 行无所谓）
+-- 回填：每个商品随机挂一个二级类目（骰子照旧在 MATERIALIZED CTE 里逐行掷；
+-- 写在 SET 里的子查询会被优化成只求值一次的 InitPlan，500 个商品全挂同一个类目）
+WITH pick AS MATERIALIZED (
+  SELECT id, 1 + floor(random() * 45)::int AS rn FROM products
+),
+kids AS (SELECT id, row_number() OVER (ORDER BY id) AS rn
+         FROM categories WHERE parent_id IS NOT NULL)
 UPDATE products
-SET category_id = (SELECT id FROM categories
-                   WHERE parent_id IS NOT NULL ORDER BY random() LIMIT 1);
+SET category_id = k.id
+FROM pick p JOIN kids k ON k.rn = p.rn
+WHERE products.id = p.id;
 
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -190,7 +197,7 @@ WITH p AS (SELECT array_agg(id) AS ids, array_agg(price) AS prices FROM products
      )
 INSERT INTO order_items (order_id, product_id, qty, unit_price)
 SELECT o.id, p.ids[o.i], 1 + floor(random() * 3)::int,
-       round(p.prices[o.i] * (0.9 + random() * 0.2), 2)
+       round((p.prices[o.i] * (0.9 + random() * 0.2))::numeric, 2)
 FROM o CROSS JOIN LATERAL generate_series(1, o.n) k CROSS JOIN p;
 
 -- ③ 历史 total_amount 对齐明细
