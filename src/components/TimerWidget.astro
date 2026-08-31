@@ -1,0 +1,111 @@
+---
+import { PHASES } from '../types/curriculum';
+
+/**
+ * 运行位部件：进行中的计时会话的运行态呈现（天/阶段、三段进度、剩余时间、控制键）。
+ * 自身不持有状态 -- 兜底横条、周页卡片内、天页右栏三个呈现位复用同一份 DOM，
+ * 由 scripts/timer.ts 按 data-* 属性全量刷新；三段进度的填充机制也只定义在
+ * 这份 scoped style 里（ADR 0001：不进全局 CSS）。
+ */
+---
+
+<div class="twidget">
+  <div class="who">
+    <span class="day" data-timer-day></span>
+    <span class="phase" data-timer-phase></span>
+  </div>
+
+  <div class="segs">
+    {PHASES.map((p, i) => <span class="seg" data-timer-seg={i} title={p.full} />)}
+  </div>
+
+  <div class="remain" data-timer-remain>00:00</div>
+
+  <div class="ctrl">
+    <button class="btn" data-timer-action="toggle">暂停</button>
+    <button class="btn" data-timer-action="skip">跳过本段</button>
+    <button class="btn" data-timer-action="stop">结束</button>
+  </div>
+</div>
+
+<style>
+  .twidget {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+  }
+
+  .who {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 200px;
+  }
+
+  .day {
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .phase {
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+  }
+
+  .segs {
+    display: flex;
+    gap: 3px;
+    flex: 2 1 220px;
+    height: 8px;
+  }
+
+  .seg {
+    position: relative;
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+
+  .seg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: var(--seg-fill, 0%);
+    background: var(--ink-3);
+    border-radius: 99px;
+    transition: width 0.25s linear;
+  }
+
+  .seg.is-current::after {
+    background: var(--accent);
+  }
+
+  .remain {
+    font-family: var(--f-mono);
+    font-size: 1.35rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    letter-spacing: 0.02em;
+  }
+
+  .ctrl {
+    display: flex;
+    gap: 8px;
+  }
+
+  @media (max-width: 700px) {
+    .remain {
+      font-size: 1.1rem;
+    }
+  }
+</style>

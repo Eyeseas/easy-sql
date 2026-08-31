@@ -1,31 +1,22 @@
 ---
-import { PHASES } from '../types/curriculum';
+import TimerWidget from './TimerWidget.astro';
+
+/**
+ * 兜底横条：进行中的计时会话不属于当前页面时的全局底部呈现位（ADR 0001）。
+ * 运行态内容直接复用运行位部件（TimerWidget）-- 全站只有一份计时器内容结构，
+ * 这里只保留固定定位外壳与完课提示（一次性的全局提醒，不属于兜底横条职责）。
+ */
 ---
 
 <div class="bar" data-timer-bar hidden>
   <div class="wrap inner">
-    <div class="who">
-      <div class="who-day" data-timer-day></div>
-      <div class="phase" data-timer-phase></div>
-    </div>
-
-    <div class="segs">
-      {PHASES.map((p, i) => <span class="seg" data-timer-seg={i} title={p.full} />)}
-    </div>
-
-    <div class="remain" data-timer-remain>00:00</div>
-
-    <div class="ctrl">
-      <button class="btn" data-timer-action="toggle">暂停</button>
-      <button class="btn" data-timer-action="skip">跳过本段</button>
-      <button class="btn" data-timer-action="stop">结束</button>
-    </div>
+    <TimerWidget />
   </div>
 </div>
 
 <div class="done" data-timer-finished hidden>
   <div class="wrap inner">
-    <span>今天的 2 小时跑完了 —— 对照过关标准自查了吗？</span>
+    <span>今天的 2 小时跑完了 -- 对照过关标准自查了吗？</span>
     <div class="ctrl">
       <button class="btn" data-action="mark-done">标记完成</button>
       <button class="btn" data-action="dismiss">还没</button>
@@ -55,85 +46,25 @@ import { PHASES } from '../types/curriculum';
   .inner {
     display: flex;
     align-items: center;
-    gap: 18px;
     padding-top: 10px;
     padding-bottom: 10px;
-    flex-wrap: wrap;
-  }
-
-  .who {
-    min-width: 180px;
-    flex: 1 1 200px;
-  }
-
-  .who-day {
-    font-size: 0.86rem;
-    font-weight: 600;
-    color: var(--ink);
-  }
-
-  .phase {
-    font-family: var(--f-mono);
-    font-size: 0.72rem;
-    color: var(--accent);
-    letter-spacing: 0.06em;
-  }
-
-  .segs {
-    display: flex;
-    gap: 3px;
-    flex: 2 1 220px;
-    height: 8px;
-  }
-
-  .seg {
-    position: relative;
-    background: var(--surface-2);
-    border: 1px solid var(--line-soft);
-    border-radius: 99px;
-    overflow: hidden;
-  }
-
-  .seg::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    width: var(--seg-fill, 0%);
-    background: var(--ink-3);
-    border-radius: 99px;
-    transition: width 0.25s linear;
-  }
-
-  .seg.is-current::after {
-    background: var(--accent);
-  }
-
-  .remain {
-    font-family: var(--f-mono);
-    font-size: 1.35rem;
-    font-variant-numeric: tabular-nums;
-    color: var(--ink);
-    letter-spacing: 0.02em;
-  }
-
-  .ctrl {
-    display: flex;
-    gap: 8px;
   }
 
   .done .inner {
     justify-content: space-between;
     font-size: 0.88rem;
     color: var(--green);
+    gap: 10px;
+  }
+
+  .done .ctrl {
+    display: flex;
+    gap: 8px;
   }
 
   @media (max-width: 700px) {
-    .remain {
-      font-size: 1.1rem;
-    }
-
-    .inner {
-      gap: 10px;
+    .done .inner {
+      flex-wrap: wrap;
     }
   }
 </style>
