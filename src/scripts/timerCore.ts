@@ -43,7 +43,11 @@ export function formatMs(ms: number): string {
  * 把「关掉页面 / 后台标签页这段时间」补算回去：逐个阶段扣掉已消耗的时间。
  * 返回 null 表示三个阶段都已跑完。
  */
-export function rollForward(s: TimerState, day: DayMeta, now: number = Date.now()): TimerState | null {
+export function rollForward(
+  s: TimerState,
+  day: DayMeta,
+  now: number = Date.now(),
+): TimerState | null {
   let cur = { ...s };
   for (;;) {
     const limit = phaseMs(day, cur.phase);

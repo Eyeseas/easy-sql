@@ -65,16 +65,22 @@ function el<T extends HTMLElement = HTMLElement>(attr: string): T | null {
 function render(): void {
   const bar = el('data-timer-bar');
   const holders = document.querySelectorAll<HTMLElement>('[data-timer-holder]');
+  const idles = document.querySelectorAll<HTMLElement>('[data-timer-idle]');
 
   if (state === null) {
     if (bar) bar.hidden = true;
     holders.forEach((h) => (h.hidden = true));
+    idles.forEach((idle) => (idle.hidden = false));
     document.title = originalTitle;
     document.querySelectorAll('[data-timer-start]').forEach((b) => b.classList.remove('is-active'));
     return;
   }
 
   const s = state;
+  idles.forEach((idle) => {
+    idle.hidden = Number(idle.dataset.timerIdle) === s.dayNo;
+  });
+
   const day = days.get(s.dayNo);
   if (!day) return;
 

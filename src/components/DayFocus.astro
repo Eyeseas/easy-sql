@@ -39,10 +39,16 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
       <span class="f-total">共 {totalMin} 分钟</span>
     </div>
 
-    <label class="f-check">
-      <input type="checkbox" data-day={day.no} data-week={week.no} />
-      <span>完成这一天</span>
-    </label>
+    <div class="f-actions">
+      <button class="btn f-start" data-timer-start={day.no} data-timer-idle={day.no}>
+        开始计时 · {PHASES.map((p, i) => `${p.label}${day.split[i]}`).join(' ')}
+      </button>
+
+      <label class="f-check">
+        <input type="checkbox" data-day={day.no} data-week={week.no} />
+        <span>完成这一天</span>
+      </label>
+    </div>
   </header>
 
   <div class="f-cols">
@@ -83,9 +89,6 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
   </section>
 
   <div class="f-tools">
-    <button class="btn" data-timer-start={day.no}>
-      开始今天 · {PHASES.map((p, i) => `${p.label}${day.split[i]}`).join(' ')}
-    </button>
     <button class="btn" data-generate={day.no}>生成补充练习</button>
     <span class="gen-status" data-gen-status={day.no}></span>
   </div>
@@ -196,6 +199,19 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     font-size: 0.72rem;
     color: var(--ink-3);
     white-space: nowrap;
+  }
+
+  .f-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .f-start {
+    color: var(--accent);
+    border-color: var(--accent);
   }
 
   .f-check {
