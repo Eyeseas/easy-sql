@@ -1,76 +1,27 @@
 /**
  * 学习计时器：按当天的 [学, 练, 盘] 分钟配比依次计时。
  *
- * 计时靠时间戳差值算，不靠 setInterval 累加 —— 后台标签页的定时器会被浏览器
+ * 计时靠时间戳差值算，不靠 setInterval 累加 -- 后台标签页的定时器会被浏览器
  * 节流到几秒一次，累加法必然越走越慢。这里 interval 只负责刷新界面，
  * 真正的剩余时间永远是 `阶段总长 - (已累计 + (now - 本次开始))`。
+ *
+ * 纯核心（阶段时长 / 已耗结算 / 格式化 / 跨段结转）抽在 ./timerCore，
+ * 有 node:test 覆盖；本文件只负责 DOM 渲染、持久化与提示副作用。
  */
 import { readJSON, writeJSON, remove } from './storage';
 import { markDay } from './progress';
 import { loadDayMeta, type DayMeta } from './dayMeta';
+import { PHASES } from '../types/curriculum';
+import { phaseMs, consumedMs, formatMs, rollForward, type TimerState } from './timerCore';
 
 const KEY = 'sql8w.timer.v1';
 const TICK_MS = 250;
-
-const PHASES = [
-  { label: '学', full: '学概念' },
-  { label: '练', full: '动手写' },
-  { label: '盘', full: '复盘' },
-] as const;
-
-interface TimerState {
-  dayNo: number;
-  /** 0 | 1 | 2 */
-  phase: number;
-  /** 当前阶段此前已累计的毫秒（暂停时结算进来） */
-  elapsedMs: number;
-  /** 正在跑时为本次开始的时间戳；暂停时为 null */
-  startedAt: number | null;
-}
 
 let days = new Map<number, DayMeta>();
 let state: TimerState | null = null;
 let ticker: number | null = null;
 let audioCtx: AudioContext | null = null;
 const originalTitle = typeof document === 'undefined' ? '' : document.title;
-
-/* ---------- 基础计算 ---------- */
-
-function phaseMs(day: DayMeta, phase: number): number {
-  return (day.split[phase] ?? 0) * 60_000;
-}
-
-function consumedMs(s: TimerState): number {
-  return s.elapsedMs + (s.startedAt === null ? 0 : Date.now() - s.startedAt);
-}
-
-function formatMs(ms: number): string {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  const m = Math.floor(total / 60);
-  const sec = total % 60;
-  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}
-
-/**
- * 把「关掉页面这段时间」补算回去：逐个阶段扣掉已消耗的时间。
- * 返回 null 表示三个阶段都已跑完。
- */
-function rollForward(s: TimerState, day: DayMeta): TimerState | null {
-  let cur = { ...s };
-  for (;;) {
-    const limit = phaseMs(day, cur.phase);
-    const used = consumedMs(cur);
-    if (used < limit) return cur;
-    const overflow = used - limit;
-    if (cur.phase >= PHASES.length - 1) return null;
-    cur = {
-      ...cur,
-      phase: cur.phase + 1,
-      elapsedMs: overflow,
-      startedAt: cur.startedAt === null ? null : Date.now(),
-    };
-  }
-}
 
 /* ---------- 提示 ---------- */
 
