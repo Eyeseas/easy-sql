@@ -2,6 +2,7 @@
 import type { Day } from '../types/curriculum';
 import { TAG_LABEL, PHASES } from '../types/curriculum';
 import LearnList from './LearnList.astro';
+import TimerWidget from './TimerWidget.astro';
 
 interface Props {
   day: Day;
@@ -24,6 +25,12 @@ const drillLabel = day.drillLabel ?? `练 · ${day.split[1]} min`;
     </span>
     <span class="split">{day.split.join(' / ')}</span>
   </label>
+
+  <!-- 周页呈现位：该天计时中由 timer.ts 按 data-timer-holder 认领并解除 hidden；
+       放在详情区外面，精简视图折叠详情时仍然可见 -->
+  <div class="slot" data-timer-holder={day.no} hidden>
+    <TimerWidget />
+  </div>
 
   <div class="detail">
     {
@@ -70,6 +77,14 @@ const drillLabel = day.drillLabel ?? `练 · ${day.split[1]} min`;
 
   .day:first-child {
     border-top: 0;
+  }
+
+  .slot {
+    margin: 12px 0;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: 3px;
   }
 
   .head {

@@ -64,58 +64,66 @@ function el<T extends HTMLElement = HTMLElement>(attr: string): T | null {
 
 function render(): void {
   const bar = el('data-timer-bar');
-  if (!bar) return;
+  const holders = document.querySelectorAll<HTMLElement>('[data-timer-holder]');
 
   if (state === null) {
-    bar.hidden = true;
+    if (bar) bar.hidden = true;
+    holders.forEach((h) => (h.hidden = true));
     document.title = originalTitle;
     document.querySelectorAll('[data-timer-start]').forEach((b) => b.classList.remove('is-active'));
     return;
   }
 
-  const day = days.get(state.dayNo);
+  const s = state;
+  const day = days.get(s.dayNo);
   if (!day) return;
 
-  bar.hidden = false;
-  const phase = PHASES[state.phase] ?? PHASES[0];
-  const remain = phaseMs(day, state.phase) - consumedMs(state);
-  const running = state.startedAt !== null;
+  // 呈现位认领：本页有该学习日的呈现位就就地显示，兑底横条只在无人认领时出场
+  // （总览页与他人周页恒走横条）
+  let claimed = false;
+  holders.forEach((h) => {
+    const owns = Number(h.dataset.timerHolder) === s.dayNo;
+    h.hidden = !owns;
+    if (owns) claimed = true;
+  });
+  if (bar) bar.hidden = claimed;
 
-  const dayEl = el('data-timer-day');
-  if (dayEl) dayEl.textContent = `D${String(day.no).padStart(2, '0')} · ${day.title}`;
+  const phase = PHASES[s.phase] ?? PHASES[0];
+  const remain = phaseMs(day, s.phase) - consumedMs(s);
+  const running = s.startedAt !== null;
 
-  const phaseEl = el('data-timer-phase');
-  if (phaseEl) phaseEl.textContent = `${phase.label} · ${phase.full}`;
-
-  const remainEl = el('data-timer-remain');
-  if (remainEl) remainEl.textContent = formatMs(remain);
-
-  const toggle = el<HTMLButtonElement>('data-timer-action="toggle"');
-  if (toggle) toggle.textContent = running ? '暂停' : '继续';
+  // 三个呈现位（卡片内/右栏/兑底横条）共用同一套 data-*：所有拷贝一起刷，永远同一事实
+  const dayLabel = `D${String(day.no).padStart(2, '0')} · ${day.title}`;
+  document.querySelectorAll('[data-timer-day]').forEach((e) => (e.textContent = dayLabel));
+  document
+    .querySelectorAll('[data-timer-phase]')
+    .forEach((e) => (e.textContent = `${phase.label} · ${phase.full}`));
+  document.querySelectorAll('[data-timer-remain]').forEach((e) => (e.textContent = formatMs(remain)));
+  document.querySelectorAll<HTMLButtonElement>('[data-timer-action="toggle"]').forEach((b) => {
+    b.textContent = running ? '暂停' : '继续';
+  });
 
   // 三段进度条：已完成的段填满，当前段按比例填
   document.querySelectorAll<HTMLElement>('[data-timer-seg]').forEach((seg) => {
     const idx = Number(seg.dataset.timerSeg);
     const total = phaseMs(day, idx);
     const ratio =
-      idx < (state?.phase ?? 0)
+      idx < s.phase
         ? 1
-        : idx > (state?.phase ?? 0)
+        : idx > s.phase
           ? 0
           : total === 0
             ? 1
-            : Math.min(1, consumedMs(state as TimerState) / total);
+            : Math.min(1, consumedMs(s) / total);
     seg.style.setProperty('--seg-fill', `${ratio * 100}%`);
-    seg.classList.toggle('is-current', idx === state?.phase);
+    seg.classList.toggle('is-current', idx === s.phase);
     seg.style.flexGrow = String(Math.max(1, day.split[idx] ?? 1));
   });
 
-  document.title = running
-    ? `${formatMs(remain)} ${phase.label} · ${originalTitle}`
-    : originalTitle;
+  document.title = running ? `${formatMs(remain)} ${phase.label} · ${originalTitle}` : originalTitle;
 
   document.querySelectorAll<HTMLElement>('[data-timer-start]').forEach((b) => {
-    b.classList.toggle('is-active', Number(b.dataset.timerStart) === state?.dayNo);
+    b.classList.toggle('is-active', Number(b.dataset.timerStart) === s.dayNo);
   });
 }
 
@@ -270,9 +278,16 @@ export function initTimer(): void {
     });
   });
 
-  el('data-timer-action="toggle"')?.addEventListener('click', toggle);
-  el('data-timer-action="skip"')?.addEventListener('click', skip);
-  el('data-timer-action="stop"')?.addEventListener('click', stop);
+  // 三个呈现位各有一份控制键，全部绑定（静态渲染，无动态插入）
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-timer-action="toggle"]')
+    .forEach((b) => b.addEventListener('click', toggle));
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-timer-action="skip"]')
+    .forEach((b) => b.addEventListener('click', skip));
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-timer-action="stop"]')
+    .forEach((b) => b.addEventListener('click', stop));
 
   const finished = el('data-timer-finished');
   finished?.querySelector('[data-action="mark-done"]')?.addEventListener('click', () => {
