@@ -230,20 +230,21 @@ ul.clean {
 }
 
 ul.clean li {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
+  position: relative;
+  padding-left: 15px;
   color: var(--ink-2);
   font-size: 0.88rem;
 }
 
 ul.clean li::before {
   content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
   width: 5px;
   height: 5px;
   border-radius: 99px;
   background: var(--accent);
-  margin-top: 8px;
 }
 
 ul.clean li b {
