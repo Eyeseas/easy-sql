@@ -3,6 +3,7 @@ import Layout from '../../layouts/Layout.astro';
 import SidePanel from '../../components/SidePanel.astro';
 import WeekRail from '../../components/WeekRail.astro';
 import DayFocus from '../../components/DayFocus.astro';
+import TimerWidget from '../../components/TimerWidget.astro';
 import { curriculum, findDay } from '../../data';
 import { tablesForDay } from '../../data/schema';
 import { site } from '../../data/meta';
@@ -95,7 +96,16 @@ const schemaLines = tablesForDay(day.no)
       </nav>
     </main>
 
-    <SidePanel />
+    {
+      /* 天页右栏呈现位：部件 + 信息栏同一个 sticky 容器，部件在上（ADR 0001）。
+          hidden 由 timer.ts 按 data-timer-holder 认领后解除 */
+    }
+    <div class="aside-col">
+      <div class="slot" data-timer-holder={day.no} hidden>
+        <TimerWidget />
+      </div>
+      <SidePanel />
+    </div>
   </div>
 
   <script
@@ -107,6 +117,29 @@ const schemaLines = tablesForDay(day.no)
 </Layout>
 
 <style>
+  /* 右栏呈现位列：部件与信息栏共用一个 sticky 容器；窄屏（≤1100px）aside 列
+     沉到主内容下方，部件随之不可见 -- ADR 0001 已接受，标签页标题兑底 */
+  .aside-col {
+    grid-area: aside;
+    position: sticky;
+    top: 24px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .slot {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+  }
+
   .crumbs {
     display: flex;
     gap: 10px;
@@ -133,5 +166,11 @@ const schemaLines = tablesForDay(day.no)
   .schema .more {
     color: var(--ink-3);
     font-size: 0.82rem;
+  }
+
+  @media (max-width: 1100px) {
+    .aside-col {
+      position: static;
+    }
   }
 </style>
