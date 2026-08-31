@@ -78,7 +78,7 @@ function render(): void {
   const day = days.get(s.dayNo);
   if (!day) return;
 
-  // 呈现位认领：本页有该学习日的呈现位就就地显示，兑底横条只在无人认领时出场
+  // 呈现位认领：本页有该学习日的呈现位就就地显示，兜底横条只在无人认领时出场
   // （总览页与他人周页恒走横条）
   let claimed = false;
   holders.forEach((h) => {
@@ -92,13 +92,15 @@ function render(): void {
   const remain = phaseMs(day, s.phase) - consumedMs(s);
   const running = s.startedAt !== null;
 
-  // 三个呈现位（卡片内/右栏/兑底横条）共用同一套 data-*：所有拷贝一起刷，永远同一事实
+  // 三个呈现位（卡片内/右栏/兜底横条）共用同一套 data-*：所有拷贝一起刷，永远同一事实
   const dayLabel = `D${String(day.no).padStart(2, '0')} · ${day.title}`;
   document.querySelectorAll('[data-timer-day]').forEach((e) => (e.textContent = dayLabel));
   document
     .querySelectorAll('[data-timer-phase]')
     .forEach((e) => (e.textContent = `${phase.label} · ${phase.full}`));
-  document.querySelectorAll('[data-timer-remain]').forEach((e) => (e.textContent = formatMs(remain)));
+  document
+    .querySelectorAll('[data-timer-remain]')
+    .forEach((e) => (e.textContent = formatMs(remain)));
   document.querySelectorAll<HTMLButtonElement>('[data-timer-action="toggle"]').forEach((b) => {
     b.textContent = running ? '暂停' : '继续';
   });
@@ -108,19 +110,15 @@ function render(): void {
     const idx = Number(seg.dataset.timerSeg);
     const total = phaseMs(day, idx);
     const ratio =
-      idx < s.phase
-        ? 1
-        : idx > s.phase
-          ? 0
-          : total === 0
-            ? 1
-            : Math.min(1, consumedMs(s) / total);
+      idx < s.phase ? 1 : idx > s.phase ? 0 : total === 0 ? 1 : Math.min(1, consumedMs(s) / total);
     seg.style.setProperty('--seg-fill', `${ratio * 100}%`);
     seg.classList.toggle('is-current', idx === s.phase);
     seg.style.flexGrow = String(Math.max(1, day.split[idx] ?? 1));
   });
 
-  document.title = running ? `${formatMs(remain)} ${phase.label} · ${originalTitle}` : originalTitle;
+  document.title = running
+    ? `${formatMs(remain)} ${phase.label} · ${originalTitle}`
+    : originalTitle;
 
   document.querySelectorAll<HTMLElement>('[data-timer-start]').forEach((b) => {
     b.classList.toggle('is-active', Number(b.dataset.timerStart) === s.dayNo);
