@@ -130,7 +130,9 @@ export function initGenerator(): void {
       }
 
       try {
-        const exercises = await generateExercises(day, 3);
+        // 把上一批生成过的题目传回去，避免重新生成时模型又出一遍同样的题
+        const prior = cache[String(dayNo)] ?? [];
+        const exercises = await generateExercises(day, 3, prior.map((e) => e.task));
         saveFor(dayNo, exercises);
         renderList(host, dayNo, exercises);
       } catch (err) {

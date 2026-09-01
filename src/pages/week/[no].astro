@@ -3,7 +3,7 @@ import Layout from '../../layouts/Layout.astro';
 import SidePanel from '../../components/SidePanel.astro';
 import WeekRail from '../../components/WeekRail.astro';
 import WeekSection from '../../components/WeekSection.astro';
-import { curriculum } from '../../data';
+import { curriculum, coveredForDay } from '../../data';
 import { site } from '../../data/meta';
 
 export function getStaticPaths() {
@@ -15,7 +15,7 @@ const no = String(week.no).padStart(2, '0');
 const prev = curriculum.find((w) => w.no === week.no - 1);
 const next = curriculum.find((w) => w.no === week.no + 1);
 
-// 出题上下文只带本周的天（learn/drill/pass/brief），浏览器直连出题用，见 scripts/llm.ts
+// 出题上下文只带本周的天（learn/drill/pass/brief/已学范围），浏览器直连出题用，见 scripts/llm.ts
 const genContext = week.days.map((d) => ({
   no: d.no,
   title: d.title,
@@ -25,6 +25,7 @@ const genContext = week.days.map((d) => ({
   pass: d.pass,
   weekNo: week.no,
   weekTitle: week.title,
+  covered: coveredForDay(d.no),
 }));
 ---
 

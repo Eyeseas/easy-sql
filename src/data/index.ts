@@ -30,3 +30,24 @@ export function findDay(no: number): Day | undefined {
 export function weekOfDay(no: number): Week | undefined {
   return curriculum.find((w) => w.days.some((d) => d.no === no));
 }
+
+/**
+ * 截至某天（不含当天）已学内容的概览，注入 #gen-context 给出题模型当「不超纲」
+ * 边界：整周学完的只给周短名，进行中的一周列出已过各天的标题（天标题本身携带
+ * 主题信息）。只给周短名 + 天标题，不带正文，控制页面体积。
+ */
+export function coveredForDay(no: number): string {
+  const parts: string[] = [];
+  for (const w of curriculum) {
+    const past = w.days.filter((d) => d.no < no);
+    if (past.length === 0) continue;
+    if (past.length === w.days.length) {
+      parts.push(`W${w.no} ${w.short}`);
+    } else {
+      parts.push(
+        `W${w.no} ${w.short}（本周已学：${past.map((d) => `D${d.no}「${d.title}」`).join('，')}）`,
+      );
+    }
+  }
+  return parts.join('；');
+}

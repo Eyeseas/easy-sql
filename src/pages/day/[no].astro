@@ -4,7 +4,7 @@ import SidePanel from '../../components/SidePanel.astro';
 import WeekRail from '../../components/WeekRail.astro';
 import DayFocus from '../../components/DayFocus.astro';
 import TimerWidget from '../../components/TimerWidget.astro';
-import { curriculum, findDay } from '../../data';
+import { curriculum, findDay, coveredForDay } from '../../data';
 import { tablesForDay } from '../../data/schema';
 import { site } from '../../data/meta';
 
@@ -21,7 +21,7 @@ const prev = findDay(day.no - 1);
 const next = findDay(day.no + 1);
 const pd = (n?: number) => String(n ?? 0).padStart(2, '0');
 
-// 出题上下文只带当天（learn/drill/pass/brief），浏览器直连出题用，见 scripts/llm.ts
+// 出题上下文只带当天（learn/drill/pass/brief/已学范围），浏览器直连出题用，见 scripts/llm.ts
 const genContext = [
   {
     no: day.no,
@@ -32,6 +32,7 @@ const genContext = [
     pass: day.pass,
     weekNo: week.no,
     weekTitle: week.title,
+    covered: coveredForDay(day.no),
   },
 ];
 // D01 只建 orders 一张表（其余的随业务逐周上线），结构直接放在这一页，不用跳回总览
