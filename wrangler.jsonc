@@ -1,0 +1,19 @@
+{
+  // Cloudflare Workers 部署配置（CF 官方推荐的新路径：Workers + 静态资源，Pages 已转维护模式）
+  // 文档：https://developers.cloudflare.com/workers/framework-guides/web-apps/astro/
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "easy-sql",
+  // Astro cloudflare adapter 的产物：dist/_worker.js/ 目录里的 Worker 入口
+  "main": "dist/_worker.js/index.js",
+  "compatibility_date": "2026-09-01",
+  // adapter 运行时按官方指引带 nodejs_compat
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    // 56 个预渲染页面全在这里，由 CF 免费不限量分发；_worker.js 不会被当静态资源
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

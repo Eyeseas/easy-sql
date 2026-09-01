@@ -1,11 +1,12 @@
 /**
  * LLM 出题代理：浏览器把端点配置（type/baseUrl/model/apiKey）和提示词 POST 到这里，
- * 由 Node 服务端转发给 LLM 端点。服务端之间没有 CORS 限制，浏览器直连各种中转 /
- * 兼容端点缺 CORS 头的问题就此解决。
+ * 由服务端转发给 LLM 端点（部署在 Cloudflare Workers 上，见 wrangler.jsonc；代码
+ * 只用 Web 标准 API，本地 Node 跑也行）。服务端之间没有 CORS 限制，浏览器直连
+ * 各种中转 / 兼容端点缺 CORS 头的问题就此解决。
  *
  * key 仍然只存在用户自己的 localStorage（或自部署时的构建产物）里，服务端只透传
- * 不落盘。注意：站点公开部署时，这个端点任何人都能借用你的服务器转发请求
- * （不消耗你的 key，但占带宽）；介意的话可以自行加访问限制。
+ * 不落盘。注意：站点公开部署时，这个端点任何人都能借用你的 Worker 转发请求
+ * （不消耗你的 key，但占配额）；介意的话可以自行加访问限制。
  */
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
@@ -86,16 +87,19 @@ function endpointError(res: Response, data: JsonObject, hasExpectedPayload: bool
 }
 
 async function fetchEndpoint(url: string, init: RequestInit): Promise<Response> {
+  // 手写超时而不是 AbortSignal.timeout：workerd 上它有过不可捕获 DOMException 的
+  // 边缘 bug（cloudflare/workerd#1020），手写版两个运行时都稳，还能 clearTimeout
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   try {
-    return await fetch(url, {
-      ...init,
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+    return await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
-    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`端点请求超过 ${UPSTREAM_TIMEOUT_MS / 1000} 秒，已取消`);
     }
     throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

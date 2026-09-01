@@ -22,12 +22,18 @@ cp .env.example .env
 注意 `PUBLIC_` 前缀的值会被打进前端产物，公开部署时 key 一定留空、走设置窗。
 
 ```bash
-pnpm build        # 构建（纯静态产物，任意静态托管可用）
-pnpm preview      # 本地预览构建产物
+pnpm build        # 构建静态页 + Worker（/api/llm 出题代理）
+pnpm preview      # wrangler dev：本地用真 workerd 跑构建产物
+pnpm run deploy   # 构建并部署到 Cloudflare Workers（需 wrangler login）
 pnpm typecheck    # astro check（TS strict）
 pnpm lint         # ESLint
 pnpm format       # Prettier
 ```
+
+部署在 Cloudflare Workers（静态资源走 CF 免费不限量分发，出题代理走 Worker，
+配置见 `wrangler.jsonc`）。首次使用：`npx wrangler login` 后 `pnpm run deploy`，
+或在 CF 控制台用 Workers Builds 连 GitHub 仓库自动部署。`*.workers.dev`
+域名在大陆不可达，国内访客需绑自定义域名。
 
 ## 一条业务主线
 
