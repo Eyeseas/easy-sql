@@ -65,8 +65,11 @@ export function initLlmSettings(): void {
         .querySelector<HTMLInputElement | HTMLSelectElement>(`[data-llm-field="${name}"]`)
         ?.value.trim() ?? '';
 
+    const rawType = get('type');
     const cfg = {
-      type: (get('type') === 'openai' ? 'openai' : 'anthropic') as LlmEndpointType,
+      type: (
+        rawType === 'openai' || rawType === 'codex' ? rawType : 'anthropic'
+      ) as LlmEndpointType,
       baseUrl: get('baseUrl'),
       model: get('model'),
       apiKey: get('apiKey'),

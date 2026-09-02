@@ -4,13 +4,14 @@
  *
  * 实际转发由同站点的服务端代理 /api/llm 完成（见 src/pages/api/llm.ts）：各种
  * 中转 / OpenAI 兼容端点通常不带 CORS 头，浏览器直连会跨域失败，服务端没有这
- * 个限制。key 仍然只存在浏览器里，代理只透传不落盘。
+ * 个限制。key 仍然只存在浏览器里，代理只透传不落盘。代理走 SSE 流式转发，
+ * 慢模型不会被 Cloudflare 边缘的超时掐断（524）。
  */
 import { z } from 'zod';
 import { schemaForPrompt, dataFactsForDay } from '../data/schema';
 import { learnTitle, type LearnEntry } from '../types/curriculum';
 
-export type LlmEndpointType = 'anthropic' | 'openai';
+export type LlmEndpointType = 'anthropic' | 'openai' | 'codex';
 
 export interface LlmConfig {
   type: LlmEndpointType;
@@ -38,13 +39,18 @@ export interface GenContextDay {
 
 function defaults(): LlmConfig {
   const env = import.meta.env;
-  const type = env.PUBLIC_LLM_TYPE === 'openai' ? 'openai' : 'anthropic';
+  const type =
+    env.PUBLIC_LLM_TYPE === 'openai' || env.PUBLIC_LLM_TYPE === 'codex'
+      ? env.PUBLIC_LLM_TYPE
+      : 'anthropic';
   return {
     type,
     baseUrl:
       env.PUBLIC_LLM_BASE_URL ||
-      (type === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com'),
-    model: env.PUBLIC_LLM_MODEL || (type === 'openai' ? 'gpt-5' : 'claude-opus-5'),
+      (type === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'),
+    model:
+      env.PUBLIC_LLM_MODEL ||
+      (type === 'openai' ? 'gpt-5' : type === 'codex' ? 'gpt-5-codex' : 'claude-opus-5'),
     apiKey: env.PUBLIC_LLM_API_KEY || '',
   };
 }
@@ -55,7 +61,8 @@ export function loadConfig(): LlmConfig {
     if (!raw) return defaults();
     const saved = JSON.parse(raw) as Partial<LlmConfig>;
     const merged = { ...defaults(), ...saved };
-    merged.type = merged.type === 'openai' ? 'openai' : 'anthropic';
+    merged.type =
+      merged.type === 'openai' || merged.type === 'codex' ? merged.type : 'anthropic';
     return merged;
   } catch {
     return defaults();
@@ -173,16 +180,88 @@ function learnForPrompt(x: LearnEntry): string {
 
 /* ---------- 调服务端代理 ---------- */
 
-async function callViaProxy(cfg: LlmConfig, system: string, user: string): Promise<string> {
+/**
+ * 走 /api/llm 生成。代理默认以 SSE 流式转发（见 docs/adr/0002）：慢模型不会再
+ * 被 Cloudflare 边缘掐成 524。onProgress 回调收到的是目前已累计的字符数。
+ * 兼容旧版代理返回的完整 JSON（部署切换期 / 上游不支持流式时的降级路径）。
+ */
+async function callViaProxy(
+  cfg: LlmConfig,
+  system: string,
+  user: string,
+  onProgress?: (chars: number) => void,
+): Promise<string> {
   const res = await fetch('/api/llm', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...cfg, system, user }),
+    body: JSON.stringify({ ...cfg, system, user, stream: true }),
   });
-  const data = (await res.json()) as { text?: string; error?: string };
-  if (!res.ok) throw new Error(data.error || `代理返回 ${res.status}`);
-  if (!data.text) throw new Error('端点没有返回内容，重试一次通常就好');
-  return data.text;
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!res.ok || !contentType.includes('text/event-stream')) {
+    const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
+    if (!res.ok) throw new Error(data?.error || `代理返回 ${res.status}`);
+    if (!data?.text) throw new Error('端点没有返回内容，重试一次通常就好');
+    return data.text;
+  }
+  return readSseText(res, onProgress);
+}
+
+/** 读代理的 SSE：{text} 增量逐段累计，{error} 抛错，[DONE] 正常收尾 */
+async function readSseText(res: Response, onProgress?: (chars: number) => void): Promise<string> {
+  if (!res.body) throw new Error('浏览器不支持流式读取，换个现代浏览器试试');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let text = '';
+  let done = false;
+  try {
+    for (;;) {
+      const { done: finished, value } = await reader.read();
+      if (finished) break;
+      // 统一换行后按空行切事件；残段留在 buf 里等下一轮。注释行（保活）不带 data:，自然跳过
+      buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+      let sep: number;
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const event = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        const data = sseDataOf(event);
+        if (data === null) continue;
+        if (data === '[DONE]') {
+          done = true;
+          continue;
+        }
+        let obj: { text?: unknown; error?: unknown };
+        try {
+          obj = JSON.parse(data) as { text?: unknown; error?: unknown };
+        } catch {
+          continue;
+        }
+        if (typeof obj.error === 'string') throw new Error(obj.error);
+        if (typeof obj.text === 'string') {
+          text += obj.text;
+          onProgress?.(text.length);
+        }
+      }
+    }
+  } finally {
+    void reader.cancel().catch(() => {
+      /* 已读完时是 no-op */
+    });
+  }
+  if (!done) throw new Error('连接中断，响应不完整，重试一次通常就好');
+  if (!text.trim()) throw new Error('端点没有返回内容，重试一次通常就好');
+  return text;
+}
+
+/** 取一个 SSE 事件里 data: 行的负载（多行按 spec 拼接）；没有则 null */
+function sseDataOf(event: string): string | null {
+  const parts: string[] = [];
+  for (const line of event.split('\n')) {
+    if (line.startsWith('data:')) parts.push(line.slice(5).replace(/^ /, ''));
+  }
+  if (parts.length === 0) return null;
+  const joined = parts.join('\n');
+  return joined === '' ? null : joined;
 }
 
 /* ---------- 解析与入口 ---------- */
@@ -201,11 +280,13 @@ export async function generateExercises(
   count: number,
   /** 上一批已生成的题目描述，传进来防重新生成时撞题 */
   priorTasks: readonly string[] = [],
+  /** 流式进度回调：目前已收到的字符数 */
+  onProgress?: (chars: number) => void,
 ): Promise<Exercise[]> {
   const cfg = loadConfig();
   if (!cfg.apiKey.trim()) throw new Error('没有配置 API key，先点右上「出题设置」');
 
   const user = buildPrompt(day, count, priorTasks);
-  const text = await callViaProxy(cfg, SYSTEM, user);
+  const text = await callViaProxy(cfg, SYSTEM, user, onProgress);
   return parseExercises(text);
 }
