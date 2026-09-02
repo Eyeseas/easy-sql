@@ -46,7 +46,7 @@ const drillLabel = day.drillLabel ?? `练 · ${day.split[1]} min`;
 
     <div>
       <div class="col-h learn">{learnLabel}</div>
-      <LearnList items={day.learn} />
+      <LearnList items={day.learn} variant="index" dayNo={day.no} />
     </div>
 
     <div>

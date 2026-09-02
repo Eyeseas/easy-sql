@@ -54,7 +54,7 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
   <div class="f-cols">
     <section class="f-col">
       <h2 class="learn">{learnLabel}</h2>
-      <LearnList items={day.learn} />
+      <LearnList items={day.learn} variant="full" />
     </section>
 
     <section class="f-col">
@@ -311,11 +311,6 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     color: var(--ink-3);
     font-family: var(--f-mono);
     font-size: 0.8em;
-  }
-
-  /* LearnList 是子组件，样式隔在作用域外；专注页是主阅读区，讲义字号放大一档 */
-  :global(.f-col h2.learn ~ .learn-list li) {
-    font-size: 1rem;
   }
 
   /* 折叠参考答案：默认收起，卡住 8 分钟再点开（课程规则之一）。

@@ -1,143 +1,253 @@
 ---
 import type { LearnEntry } from '../types/curriculum';
+import { learnTitle } from '../types/curriculum';
 import { highlightSql } from '../utils/highlightSql';
 
 /**
- * 「学」栏列表：字符串条目原样一行；小讲义对象渲染成折叠块，
- * 只露标题，点开看 场景 / 讲解 / 示例 / 易错点。两处布局共用（DayCard / DayFocus）。
+ * 「学」栏列表，两种形态，都不折叠：
+ *   full  天页专注视图的讲义正文，场景 / 讲解 / 示例 / 易错全部平铺，条目带 #learn-n 锚点。
+ *   index 周页卡片里的标题清单，只列知识点名，链到天页对应锚点。
+ * 字符串条目（测评日的「规则」那类）两种形态下都只是一行字。
  */
 interface Props {
   items: readonly LearnEntry[];
+  /** 呈现形态，默认 full */
+  variant?: 'full' | 'index';
+  /** index 形态下拼锚点链接用；缺省则标题不可点 */
+  dayNo?: number;
 }
 
-const { items } = Astro.props;
+const { items, variant = 'full', dayNo } = Astro.props;
+const nn = (i: number) => String(i + 1).padStart(2, '0');
 ---
 
-<ul class="learn-list">
-  {
-    items.map((x) =>
-      typeof x === 'string' ? (
-        <li set:html={x} />
-      ) : (
-        <li class="topic">
-          <details class="fold">
-            <summary set:html={x.title} />
+{
+  variant === 'index' ? (
+    <ol class="learn index">
+      {items.map((x, i) => (
+        <li>
+          <i class="idx">{nn(i)}</i>
+          {dayNo ? (
+            <a href={`/day/${dayNo}#learn-${i + 1}`} set:html={learnTitle(x)} />
+          ) : (
+            <span set:html={learnTitle(x)} />
+          )}
+        </li>
+      ))}
+    </ol>
+  ) : (
+    <ol class="learn full">
+      {items.map((x, i) =>
+        typeof x === 'string' ? (
+          <li class="topic bare" id={`learn-${i + 1}`}>
+            <p class="t">
+              <i class="idx">{nn(i)}</i>
+              <span set:html={x} />
+            </p>
+          </li>
+        ) : (
+          <li class="topic" id={`learn-${i + 1}`}>
+            <h3 class="t">
+              <i class="idx">{nn(i)}</i>
+              <span set:html={x.title} />
+            </h3>
+
             <div class="note">
               {x.scene && (
-                <p class="row scene">
-                  <b>场景</b>
+                <p class="scene">
+                  <i class="lbl">场景</i>
                   <span set:html={x.scene} />
                 </p>
               )}
-              <p class="row body">
-                <b>讲解</b>
-                <span set:html={x.body} />
-              </p>
-              {x.sql && (
-                <div class="row sql">
-                  <b>试试</b>
-                  <pre class="sql-code" set:html={highlightSql(x.sql)} />
-                </div>
-              )}
+
+              <p class="say" set:html={x.body} />
+
+              {x.sql && <pre class="sql-code" set:html={highlightSql(x.sql)} />}
+
               {x.pitfall && (
-                <p class="row pitfall">
-                  <b>易错</b>
+                <p class="pit">
+                  <i class="lbl">易错</i>
                   <span set:html={x.pitfall} />
                 </p>
               )}
             </div>
-          </details>
-        </li>
-      ),
-    )
-  }
-</ul>
+          </li>
+        ),
+      )}
+    </ol>
+  )
+}
 
 <style>
-  .learn-list {
+  /* 序号占一条固定字距的左栏，标题与正文靠它对齐成一根轴 */
+  .learn {
+    --gutter: 2.1rem;
+    --gap: 12px;
     margin: 0;
-    padding-left: 1.15em;
-    display: grid;
-    gap: 8px;
+    padding: 0;
+    list-style: none;
   }
 
-  .learn-list li {
-    color: var(--ink-2);
-    font-size: 0.92rem;
-    line-height: 1.7;
-  }
-
-  .learn-list li::marker {
-    color: var(--ink-3);
+  .idx {
+    flex: none;
+    width: var(--gutter);
     font-family: var(--f-mono);
-    font-size: 0.78em;
+    font-style: normal;
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
   }
 
-  /* 折叠机制（+/− 记号、悬停点亮）走 base.css 的 .fold，这里只管讲义内容排版 */
+  /* ---------- full：天页讲义正文 ---------- */
+
+  /* 条目之间只靠一条细线断句，不套卡片--外层 .f-col 已经是一张卡了 */
+  .full > .topic {
+    padding: 22px 0;
+    border-top: 1px solid var(--line-soft);
+    scroll-margin-top: 20px;
+  }
+
+  .full > .topic:first-child {
+    padding-top: 2px;
+    border-top: 0;
+  }
+
+  .full > .topic:last-child {
+    padding-bottom: 2px;
+  }
+
+  .full .t {
+    display: flex;
+    gap: var(--gap);
+    align-items: baseline;
+    margin: 0;
+    font-family: var(--f-body);
+    font-weight: 600;
+    font-size: 1.06rem;
+    line-height: 1.5;
+    color: var(--ink);
+    letter-spacing: -0.005em;
+  }
+
+  /* 字符串条目（测评日的规则那类）只有一行字：按正文字重排，收紧行距、
+     相邻两条之间不断线--那是一份清单，不是几篇讲义 */
+  .full > .topic.bare {
+    padding: 9px 0;
+  }
+
+  .full > .topic.bare + .topic.bare {
+    border-top: 0;
+  }
+
+  .bare .t {
+    font-weight: 400;
+    font-size: 1rem;
+    line-height: 1.75;
+    color: var(--ink-2);
+  }
 
   .note {
-    margin: 8px 0 2px;
-    padding: 12px 15px;
-    background: var(--surface-2);
-    border-left: 2px solid var(--accent);
-    border-radius: 2px;
-    display: grid;
-    gap: 9px;
-    font-size: 0.87rem;
-    line-height: 1.68;
+    margin-left: calc(var(--gutter) + var(--gap));
+  }
+
+  /* 场景是引子，压一档字号与灰度，不做底色块 */
+  .scene {
+    margin: 7px 0 0;
+    font-size: 0.9rem;
+    line-height: 1.7;
+    color: var(--ink-3);
+  }
+
+  .say {
+    margin: 10px 0 0;
+    max-width: 68ch;
+    font-size: 1rem;
+    line-height: 1.8;
     color: var(--ink-2);
   }
 
-  .row {
-    margin: 0;
-    display: grid;
-    grid-template-columns: 38px minmax(0, 1fr);
-    gap: 10px;
-    align-items: baseline;
-  }
-
-  .row b {
+  .lbl {
     font-family: var(--f-mono);
+    font-style: normal;
     font-size: 0.66rem;
     font-weight: 600;
     letter-spacing: 0.1em;
-    color: var(--ink-3);
+    margin-right: 0.7em;
     white-space: nowrap;
   }
 
-  .row.scene b {
+  .scene .lbl {
     color: var(--amber);
   }
 
-  .row.pitfall b {
+  .pit .lbl {
     color: var(--danger);
   }
 
-  .row.pitfall span {
-    padding: 6px 10px;
-    margin: -6px 0 -6px -10px;
-    background: var(--danger-soft);
-    border-radius: 2px;
-  }
-
-  .row.pitfall span {
-    color: var(--ink-2);
-  }
-
-  .row.sql {
-    align-items: start;
-  }
-
-  .row.sql pre {
-    margin: 0;
-    padding: 10px 12px;
-    background: var(--surface);
+  .learn .sql-code {
+    margin: 13px 0 0;
+    padding: 12px 15px;
+    background: var(--surface-2);
     border: 1px solid var(--line-soft);
     border-radius: 2px;
     overflow-x: auto;
-    font-size: 0.78rem;
-    line-height: 1.6;
+    font-size: 0.8rem;
+    line-height: 1.72;
     color: var(--ink-2);
     white-space: pre;
+  }
+
+  /* 易错每条讲义都有，铺开后一页四五个--只留 2px 左规不填底色，
+     让 SQL 块成为每条讲义里唯一的实底面，页面才有呼吸 */
+  .pit {
+    margin: 13px 0 0;
+    padding-left: 13px;
+    border-left: 2px solid var(--danger);
+    font-size: 0.89rem;
+    line-height: 1.72;
+    color: var(--ink-2);
+  }
+
+  /* ---------- index：周页标题清单 ---------- */
+
+  .index {
+    display: grid;
+    gap: 7px;
+  }
+
+  .index li {
+    display: flex;
+    gap: var(--gap);
+    align-items: baseline;
+    font-size: 0.92rem;
+    line-height: 1.7;
+    color: var(--ink-2);
+  }
+
+  .index a {
+    color: var(--ink-2);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+
+  .index a:hover {
+    color: var(--accent);
+    border-bottom-color: var(--line);
+  }
+
+  @media (max-width: 640px) {
+    /* 窄屏收掉左栏：序号退回行内前缀，正文顶到边 */
+    .learn {
+      --gutter: auto;
+      --gap: 10px;
+    }
+
+    .full .note {
+      margin-left: 0;
+    }
+
+    .full > .topic {
+      padding: 18px 0;
+    }
   }
 </style>
