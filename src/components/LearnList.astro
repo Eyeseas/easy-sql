@@ -20,7 +20,7 @@ const { items } = Astro.props;
         <li set:html={x} />
       ) : (
         <li class="topic">
-          <details>
+          <details class="fold">
             <summary set:html={x.title} />
             <div class="note">
               {x.scene && (
@@ -73,34 +73,7 @@ const { items } = Astro.props;
     font-size: 0.78em;
   }
 
-  .topic details summary {
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .topic details summary:hover {
-    color: var(--accent);
-  }
-
-  /* 展开时标题左侧给个记号，收起时回到列表原样 */
-  .topic details summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .topic details summary::before {
-    content: '+';
-    display: inline-block;
-    width: 1em;
-    margin-left: -1em;
-    color: var(--ink-3);
-    font-family: var(--f-mono);
-    transition: transform 0.12s ease;
-  }
-
-  .topic details[open] summary::before {
-    content: '−';
-    color: var(--accent);
-  }
+  /* 折叠机制（+/− 记号、悬停点亮）走 base.css 的 .fold，这里只管讲义内容排版 */
 
   .note {
     margin: 8px 0 2px;

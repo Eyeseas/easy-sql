@@ -36,6 +36,56 @@ a {
   text-underline-offset: 3px;
 }
 
+/* ---------- 折叠块（全站统一） ----------
+   学栏讲义（LearnList 的 .topic）、练栏参考答案（.drill-ans）、AI 补充练习（.gen-fold）
+   共用一套机制：不用浏览器原生三角，+/− 记号挂在 summary 行首左侧（负缩进），
+   summary 文字与上下文文字对齐；悬停点亮 accent；展开只翻记号，文字颜色不变。
+   .fold = 机制本身；.fold-label = 「参考答案 / 提示」这类 mono 小字标签形态 */
+summary {
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.fold > summary::before {
+  content: '+';
+  display: inline-block;
+  width: 1.2em;
+  margin-left: -1.2em;
+  font-family: var(--f-mono);
+  color: var(--ink-3);
+}
+
+.fold > summary:hover,
+.fold > summary:hover::before {
+  color: var(--accent);
+}
+
+.fold[open] > summary::before {
+  content: '−';
+  color: var(--accent);
+}
+
+.fold-label > summary {
+  font-family: var(--f-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  width: max-content;
+}
+
+/* 展开后标题与内容统一留 8px，组件里的内容元素不必再各写间距 */
+.fold-label[open] > summary {
+  margin-bottom: 8px;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
@@ -389,30 +439,18 @@ tr:last-child td {
   margin-bottom: 6px;
 }
 
+/* 折叠外观走全局 .fold / .fold-label，这里只管排布间距 */
 .gen-fold {
-  margin-top: 4px;
-}
-
-.gen-fold > summary {
-  cursor: pointer;
-  font-family: var(--f-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  width: max-content;
+  margin-top: 8px;
 }
 
 .gen-fold > p {
-  margin: 6px 0 0;
+  margin: 0;
   color: var(--ink-2);
 }
 
-.gen-fold > pre {
-  margin-top: 6px;
-}
-
 .gen-check {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 0.8rem;
   color: var(--ink-3);
 }

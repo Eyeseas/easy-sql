@@ -65,7 +65,7 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
             <li>
               <div set:html={x} />
               {day.drillAnswers?.[i] && (
-                <details class="drill-ans">
+                <details class="fold fold-label drill-ans">
                   <summary>参考答案</summary>
                   {day.drillAnswers[i]!.note && <p class="ans-note">{day.drillAnswers[i]!.note}</p>}
                   {day.drillAnswers[i]!.sql && (
@@ -318,28 +318,10 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     font-size: 1rem;
   }
 
-  /* 折叠参考答案：默认收起，卡住 8 分钟再点开（课程规则之一） */
+  /* 折叠参考答案：默认收起，卡住 8 分钟再点开（课程规则之一）。
+     折叠外观（+/− 记号、小标签、展开留白）走 base.css 的 .fold / .fold-label */
   .drill-ans {
     margin-top: 8px;
-  }
-
-  .drill-ans summary {
-    cursor: pointer;
-    user-select: none;
-    font-family: var(--f-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.08em;
-    color: var(--ink-3);
-    width: max-content;
-  }
-
-  .drill-ans summary:hover {
-    color: var(--accent);
-  }
-
-  .drill-ans[open] summary {
-    color: var(--amber);
-    margin-bottom: 8px;
   }
 
   .ans-note {

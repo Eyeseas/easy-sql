@@ -69,8 +69,8 @@ function renderList(host: HTMLElement, dayNo: number, list: Exercise[]): void {
           (e) => `
         <li>
           <div class="gen-task">${escapeHtml(e.task)}</div>
-          <details class="gen-fold"><summary>提示</summary><p>${escapeHtml(e.hint)}</p></details>
-          <details class="gen-fold"><summary>参考答案</summary><pre class="sql-code">${highlightSql(e.referenceSql)}</pre></details>
+          <details class="fold fold-label gen-fold"><summary>提示</summary><p>${escapeHtml(e.hint)}</p></details>
+          <details class="fold fold-label gen-fold"><summary>参考答案</summary><pre class="sql-code">${highlightSql(e.referenceSql)}</pre></details>
           <div class="gen-check"><b>自查</b>${escapeHtml(e.checkpoint)}</div>
         </li>`,
         )
