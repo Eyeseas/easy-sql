@@ -159,8 +159,10 @@ const schemaLines = tablesForDay(day.no)
     color: var(--accent);
   }
 
+  /* minmax(0, 1fr)：里面的 pre 不得以 min-content 把主栏撑宽（同 DayFocus） */
   .schema {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
 

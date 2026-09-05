@@ -331,6 +331,12 @@ ul.clean li b {
   min-width: 0;
 }
 
+/* grid 项的 min-width 默认是 auto（= 内容的 min-content），代码块／宽表格会让
+   子项自己溢出轨道压到右信息栏上；主栏所有直接子项一律归零兜底 */
+.shell > main > * {
+  min-width: 0;
+}
+
 .shell > .panel {
   grid-area: aside;
 }
@@ -422,14 +428,17 @@ tr:last-child td {
 
 /* ---------- AI 补充练习（由 generator.ts 用 innerHTML 注入，无法用组件作用域样式） ---------- */
 
+/* minmax(0, 1fr) + min-width: 0：参考答案里的 SQL 块不得撑宽主栏，同 DayFocus */
 .gen-list {
   margin: 12px 0 0;
   padding-left: 1.15em;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
 .gen-list > li {
+  min-width: 0;
   color: var(--ink-2);
   font-size: 0.855rem;
 }

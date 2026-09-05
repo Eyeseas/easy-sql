@@ -97,8 +97,13 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
 </article>
 
 <style>
+  /* 这一路 grid 容器都要显式写 minmax(0, 1fr)、grid 项都要 min-width: 0：
+     自动最小尺寸等于内容的 min-content，参考答案里 white-space: pre 的 SQL
+     最长一行会顺着 .focus → .f-cols → .f-col → ol → li 把主栏顶宽压到右栏上，
+     pre 自己的 overflow-x: auto 拦不住 */
   .focus {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 26px;
   }
 
@@ -262,12 +267,13 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
   /* 学/练 上下排布 */
   .f-cols {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 26px;
     align-items: start;
   }
 
   .f-col {
+    min-width: 0;
     padding: 24px 28px;
     background: var(--surface);
     border: 1px solid var(--line);
@@ -298,10 +304,12 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     margin: 0;
     padding-left: 1.25em;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
 
   .f-col ol li {
+    min-width: 0;
     color: var(--ink-2);
     font-size: 1rem;
     line-height: 1.75;
