@@ -1,11 +1,11 @@
 ---
-// 出题端点设置弹窗。可被右上「出题设置」按钮和生成按钮（未配置时）唤起，
-// 具体逻辑在 src/scripts/llmSettings.ts。
+// AI 端点设置弹窗（出题与答疑共用，见 CONTEXT.md）。可被右上「AI 设置」按钮和
+// 生成/答疑的引导唤起，具体逻辑在 src/scripts/llmSettings.ts。
 ---
 
 <div class="mask" data-llm-dialog hidden>
   <div class="card dlg">
-    <h3>出题端点设置</h3>
+    <h3>AI 端点设置</h3>
     <p class="hint">
       请求由浏览器直发你填的端点，不经过任何中间服务器。配置存在本浏览器的 localStorage
       里；留空保存则回到构建时 .env 的默认值。

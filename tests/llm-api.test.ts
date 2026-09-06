@@ -188,11 +188,7 @@ test('codex: requests the Responses API shape and relays output_text deltas', as
     { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user' }] },
   ]);
   // completed 事件里带了全文，但增量已发过，不能重复补发
-  assert.deepEqual(events, [
-    'data: {"text":"第一段"}',
-    'data: {"text":"第二段"}',
-    'data: [DONE]',
-  ]);
+  assert.deepEqual(events, ['data: {"text":"第一段"}', 'data: {"text":"第二段"}', 'data: [DONE]']);
 });
 
 test('codex: accumulates the SSE stream for legacy non-stream clients', async () => {
@@ -287,4 +283,153 @@ test('reports a stream that ends without a terminator as incomplete', async () =
 
   assert.ok(events.some((e) => e.includes('提前断开')));
   assert.ok(!events.includes('data: [DONE]'));
+});
+
+/* ---------- 对话模式（body 带 messages，答疑用，见 docs/adr/0003） ---------- */
+
+function chatRequest(
+  type: 'openai' | 'anthropic' | 'codex' = 'openai',
+  extra: Record<string, unknown> = {},
+): Request {
+  return new Request('http://localhost/api/llm', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      type,
+      baseUrl: 'https://llm.invalid/v1',
+      model: 'test-model',
+      apiKey: '<REDACTED>',
+      system: 'system',
+      messages: [
+        { role: 'user', content: '第一问' },
+        { role: 'assistant', content: '第一答' },
+        { role: 'user', content: '追问' },
+      ],
+      stream: true,
+      ...extra,
+    }),
+  });
+}
+
+async function postChat(
+  type?: 'openai' | 'anthropic' | 'codex',
+  extra: Record<string, unknown> = {},
+): Promise<Response> {
+  const response = await POST({ request: chatRequest(type, extra) } as Parameters<typeof POST>[0]);
+  assert.ok(response instanceof Response);
+  return response;
+}
+
+test('chat mode: relays the full conversation to OpenAI-compatible endpoints without JSON mode', async () => {
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      // 跨 chunk 切开的增量，验证对话模式沿用同一条重组转发路径
+      'data: {"choices":[{"delta":{"content":"思"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"路是"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+  };
+
+  const response = await postChat();
+  const events = await readSse(response);
+
+  assert.deepEqual(upstreamBody.messages, [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: '第一问' },
+    { role: 'assistant', content: '第一答' },
+    { role: 'user', content: '追问' },
+  ]);
+  assert.equal(upstreamBody.response_format, undefined); // 对话是自由文本，不开出题的 JSON mode
+  assert.equal(upstreamBody.stream, true);
+  assert.deepEqual(events, ['data: {"text":"思"}', 'data: {"text":"路是"}', 'data: [DONE]']);
+});
+
+test('chat mode: anthropic gets system plus the conversation history', async () => {
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"好"}}\n\n',
+      'data: {"type":"message_stop"}\n\n',
+    ]);
+  };
+
+  await postChat('anthropic');
+
+  assert.equal(upstreamBody.system, 'system');
+  assert.deepEqual(upstreamBody.messages, [
+    { role: 'user', content: '第一问' },
+    { role: 'assistant', content: '第一答' },
+    { role: 'user', content: '追问' },
+  ]);
+});
+
+test('chat mode: codex gets instructions plus input_text/output_text history', async () => {
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"type":"response.output_text.delta","delta":"答"}\n\n',
+      'data: {"type":"response.completed","response":{"output":[]}}\n\n',
+    ]);
+  };
+
+  await postChat('codex');
+
+  assert.equal(upstreamBody.instructions, 'system');
+  assert.deepEqual(upstreamBody.input, [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: '第一问' }] },
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '第一答' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: '追问' }] },
+  ]);
+  assert.equal(upstreamBody.store, false);
+});
+
+test('chat mode: rejects malformed messages with 400', async () => {
+  globalThis.fetch = async () => {
+    throw new Error('不应触达上游');
+  };
+
+  const unknownRole = await postChat('openai', {
+    messages: [{ role: 'system', content: '假扮用户' }],
+  });
+  assert.equal(unknownRole.status, 400);
+
+  const emptyContent = await postChat('openai', {
+    messages: [{ role: 'user', content: '' }],
+  });
+  assert.equal(emptyContent.status, 400);
+});
+
+test('one-shot mode still asks OpenAI-compatible endpoints for JSON mode', async () => {
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"choices":[{"delta":{"content":"{}"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+  };
+
+  await post('openai', { stream: true });
+
+  // 双模式分界锁死：不带 messages 的旧调用方（出题）仍走 JSON mode
+  assert.deepEqual(upstreamBody.response_format, { type: 'json_object' });
+  assert.deepEqual(upstreamBody.messages, [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'user' },
+  ]);
+});
+
+test('rejects a body with neither user nor messages', async () => {
+  globalThis.fetch = async () => {
+    throw new Error('不应触达上游');
+  };
+
+  const response = await post('openai', { user: undefined });
+  assert.equal(response.status, 400);
 });

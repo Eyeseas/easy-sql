@@ -30,7 +30,18 @@ const BodySchema = z.object({
   model: z.string().min(1),
   apiKey: z.string().min(1),
   system: z.string(),
-  user: z.string(),
+  /** 一次性生成的用户提示词（出题）。对话模式（messages）下不需要 */
+  user: z.string().optional(),
+  /** 多轮对话历史（答疑，见 docs/adr/0003）。带它即对话模式：自由文本，不设 JSON mode */
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().min(1),
+      }),
+    )
+    .min(1)
+    .optional(),
   stream: z.boolean().optional(),
 });
 
@@ -42,6 +53,10 @@ export const POST: APIRoute = async ({ request }) => {
     return Response.json({ error: '请求参数不对' }, { status: 400 });
   }
   const cfg = parsed.data;
+  // 出题走 system + user 一次性生成；答疑走 system + messages 多轮。两者必居其一
+  if (!cfg.messages && cfg.user === undefined) {
+    return Response.json({ error: '请求参数不对' }, { status: 400 });
+  }
   if (cfg.stream) return relayAsStream(cfg);
   try {
     return Response.json({ text: await runUpstream(cfg, false, () => {}) });
@@ -100,7 +115,9 @@ function relayAsStream(cfg: Body): Response {
         })();
       },
     }),
-    { headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' } },
+    {
+      headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' },
+    },
   );
 }
 
@@ -179,6 +196,8 @@ function elapsed(startedAt: number): string {
 
 function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: RequestInit } {
   const streamField = stream ? { stream: true } : {};
+  // 对话模式（答疑多轮）：user 一次性提示词换成完整对话历史；不设 response_format
+  const chat = cfg.messages ?? null;
   if (cfg.type === 'anthropic') {
     return {
       url: joinUrl(cfg.baseUrl, '/v1/messages'),
@@ -194,7 +213,9 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
           max_tokens: 16000,
           ...streamField,
           system: cfg.system,
-          messages: [{ role: 'user', content: cfg.user }],
+          messages: chat
+            ? chat.map((m) => ({ role: m.role, content: m.content }))
+            : [{ role: 'user', content: cfg.user ?? '' }],
         }),
       },
     };
@@ -204,7 +225,8 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
     // false、只收流式；temperature / max_output_tokens 会被直接拒（订阅侧自己
     // 限长）。所以只带它认识的最小字段集——官方 api.openai.com 的 Responses API
     // 同样接受这个形状。stream 参数在这里被无视：codex 端点没有非流式可用，
-    // 旧客户端的整段 JSON 请求由服务端自己攒流实现
+    // 旧客户端的整段 JSON 请求由服务端自己攒流实现。多轮历史里 user 回合用
+    // input_text、assistant 回合用 output_text（Responses API 的对话形状）
     return {
       url: joinUrl(cfg.baseUrl, '/v1/responses'),
       init: {
@@ -216,13 +238,21 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
         body: JSON.stringify({
           model: cfg.model,
           instructions: cfg.system,
-          input: [
-            {
-              type: 'message',
-              role: 'user',
-              content: [{ type: 'input_text', text: cfg.user }],
-            },
-          ],
+          input: chat
+            ? chat.map((m) => ({
+                type: 'message',
+                role: m.role,
+                content: [
+                  { type: m.role === 'user' ? 'input_text' : 'output_text', text: m.content },
+                ],
+              }))
+            : [
+                {
+                  type: 'message',
+                  role: 'user',
+                  content: [{ type: 'input_text', text: cfg.user ?? '' }],
+                },
+              ],
           stream: true,
           store: false,
         }),
@@ -241,11 +271,17 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
         model: cfg.model,
         max_tokens: 8000,
         ...streamField,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: cfg.system },
-          { role: 'user', content: cfg.user },
-        ],
+        // JSON mode 是出题（一次性生成、要解析成练习 JSON）才需要的；答疑对话要自由文本
+        ...(chat ? {} : { response_format: { type: 'json_object' } }),
+        messages: chat
+          ? [
+              { role: 'system', content: cfg.system },
+              ...chat.map((m) => ({ role: m.role, content: m.content })),
+            ]
+          : [
+              { role: 'system', content: cfg.system },
+              { role: 'user', content: cfg.user ?? '' },
+            ],
       }),
     },
   };

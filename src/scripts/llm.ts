@@ -1,15 +1,18 @@
 /**
- * LLM 出题。端点类型/地址/模型/key 存在 localStorage，默认值来自构建时 .env 的
- * PUBLIC_LLM_*（会被打进前端产物，只在自己部署时填 key）。
+ * LLM 共享层：出题与答疑两个功能共用（术语见 CONTEXT.md）。端点类型/地址/模型/
+ * key 存在 localStorage（AI 设置），默认值来自构建时 .env 的 PUBLIC_LLM_*
+ * （会被打进前端产物，只在自己部署时填 key）。
  *
  * 实际转发由同站点的服务端代理 /api/llm 完成（见 src/pages/api/llm.ts）：各种
  * 中转 / OpenAI 兼容端点通常不带 CORS 头，浏览器直连会跨域失败，服务端没有这
  * 个限制。key 仍然只存在浏览器里，代理只透传不落盘。代理走 SSE 流式转发，
- * 慢模型不会被 Cloudflare 边缘的超时掐断（524）。
+ * 慢模型不会被 Cloudflare 边缘的超时掐断（524）。出题走 system + user 一次性
+ * 生成；答疑走 system + messages 多轮对话（ADR-0003）。
  */
 import { z } from 'zod';
 import { schemaForPrompt, dataFactsForDay } from '../data/schema';
-import { learnTitle, type LearnEntry } from '../types/curriculum';
+import type { LearnEntry } from '../types/curriculum';
+import { stripTags, learnForPrompt } from '../utils/promptText';
 
 export type LlmEndpointType = 'anthropic' | 'openai' | 'codex';
 
@@ -22,19 +25,25 @@ export interface LlmConfig {
 
 const KEY = 'sql8w.llm.v1';
 
-/** 出题上下文：页面里 #gen-context JSON 提供的当天数据（周页带 7 天，天页带 1 天） */
+/** 出题上下文：页面里 #gen-context JSON 提供的当天数据（周页带 7 天，天页带 1 天）；答疑也用它 */
 export interface GenContextDay {
   no: number;
   title: string;
   /** 业务剧情一句话，可为空（老数据） */
   brief?: string;
-  learn: LearnEntry[];
-  drill: string[];
+  learn: readonly LearnEntry[];
+  drill: readonly string[];
   pass: string;
   weekNo: number;
   weekTitle: string;
-  /** 截至当天已学内容概览（见 data/index.ts 的 coveredForDay），防模型出超纲题 */
+  /** 截至当天已学内容概览（见 data/index.ts 的 coveredForDay），防模型超纲 */
   covered?: string;
+}
+
+/** 答疑的多轮对话回合（/api/llm 对话模式的 messages） */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 function defaults(): LlmConfig {
@@ -61,8 +70,7 @@ export function loadConfig(): LlmConfig {
     if (!raw) return defaults();
     const saved = JSON.parse(raw) as Partial<LlmConfig>;
     const merged = { ...defaults(), ...saved };
-    merged.type =
-      merged.type === 'openai' || merged.type === 'codex' ? merged.type : 'anthropic';
+    merged.type = merged.type === 'openai' || merged.type === 'codex' ? merged.type : 'anthropic';
     return merged;
   } catch {
     return defaults();
@@ -90,10 +98,7 @@ export const ExercisesSchema = z.object({
       z.object({
         task: z.string().min(1).describe('题目描述，中文，说清要查什么、输出哪几列'),
         hint: z.string().min(1).describe('卡住时的提示，一句话，点破关键思路但不给答案'),
-        referenceSql: z
-          .string()
-          .min(1)
-          .describe('可直接在 PostgreSQL 16 上运行的参考答案'),
+        referenceSql: z.string().min(1).describe('可直接在 PostgreSQL 16 上运行的参考答案'),
         checkpoint: z.string().min(1).describe('自查点：怎么判断自己写对了'),
       }),
     )
@@ -150,69 +155,17 @@ ${day.drill.map((x, i) => `${i + 1}. ${stripTags(x)}`).join('\n')}${
 以 JSON 输出：{"exercises": [{"task": "...", "hint": "...", "referenceSql": "...", "checkpoint": "..."}]}，共 ${count} 题。`;
 }
 
-/**
- * 课程文案里带 <code>/<b> 标签和 HTML 实体，喂给模型前都处理掉：省 token、
- * 避免它学着输出 HTML，也避免 SQL 里的 &gt; 之类实体干扰语义。
- */
-function stripTags(s: string): string {
-  return s
-    .replace(/<[^>]+>/g, '')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&'); // amp 最后解，避免「&amp;gt;」二次解码成 '>'
-}
-
-/**
- * 小讲义展开成一行文字：标题 + 场景 + 讲解 + 示例 SQL + 易错点。示例 SQL 是
- * 「今天教了什么语法」最直接的证据，带上它参考答案的语法水平才能对齐当天进度。
- */
-function learnForPrompt(x: LearnEntry): string {
-  if (typeof x === 'string') return stripTags(x);
-  const parts = [stripTags(learnTitle(x))];
-  if (x.scene) parts.push(`场景：${stripTags(x.scene)}`);
-  parts.push(stripTags(x.body));
-  if (x.sql) parts.push(`示例：${stripTags(x.sql.replace(/\s+/g, ' '))}`);
-  if (x.pitfall) parts.push(`易错：${stripTags(x.pitfall)}`);
-  return parts.join(' ');
-}
-
 /* ---------- 调服务端代理 ---------- */
 
 /**
- * 走 /api/llm 生成。代理默认以 SSE 流式转发（见 docs/adr/0002）：慢模型不会再
- * 被 Cloudflare 边缘掐成 524。onProgress 回调收到的是目前已累计的字符数。
- * 兼容旧版代理返回的完整 JSON（部署切换期 / 上游不支持流式时的降级路径）。
+ * 读代理的 SSE：逐个产出 {text} 增量；{error} 抛错；[DONE] 正常收尾；流意外
+ * 断开抛错。出题（计字数进度）与答疑（逐段拼累计文本）都建立在它上面。
  */
-async function callViaProxy(
-  cfg: LlmConfig,
-  system: string,
-  user: string,
-  onProgress?: (chars: number) => void,
-): Promise<string> {
-  const res = await fetch('/api/llm', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...cfg, system, user, stream: true }),
-  });
-  const contentType = res.headers.get('content-type') ?? '';
-  if (!res.ok || !contentType.includes('text/event-stream')) {
-    const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
-    if (!res.ok) throw new Error(data?.error || `代理返回 ${res.status}`);
-    if (!data?.text) throw new Error('端点没有返回内容，重试一次通常就好');
-    return data.text;
-  }
-  return readSseText(res, onProgress);
-}
-
-/** 读代理的 SSE：{text} 增量逐段累计，{error} 抛错，[DONE] 正常收尾 */
-async function readSseText(res: Response, onProgress?: (chars: number) => void): Promise<string> {
+export async function* sseDeltas(res: Response): AsyncGenerator<string> {
   if (!res.body) throw new Error('浏览器不支持流式读取，换个现代浏览器试试');
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  let text = '';
   let done = false;
   try {
     for (;;) {
@@ -237,10 +190,7 @@ async function readSseText(res: Response, onProgress?: (chars: number) => void):
           continue;
         }
         if (typeof obj.error === 'string') throw new Error(obj.error);
-        if (typeof obj.text === 'string') {
-          text += obj.text;
-          onProgress?.(text.length);
-        }
+        if (typeof obj.text === 'string') yield obj.text;
       }
     }
   } finally {
@@ -249,6 +199,15 @@ async function readSseText(res: Response, onProgress?: (chars: number) => void):
     });
   }
   if (!done) throw new Error('连接中断，响应不完整，重试一次通常就好');
+}
+
+/** 读代理的 SSE 并累计全文；onProgress 回调目前已收字符数 */
+async function readSseText(res: Response, onProgress?: (chars: number) => void): Promise<string> {
+  let text = '';
+  for await (const delta of sseDeltas(res)) {
+    text += delta;
+    onProgress?.(text.length);
+  }
   if (!text.trim()) throw new Error('端点没有返回内容，重试一次通常就好');
   return text;
 }
@@ -262,6 +221,74 @@ function sseDataOf(event: string): string | null {
   if (parts.length === 0) return null;
   const joined = parts.join('\n');
   return joined === '' ? null : joined;
+}
+
+/**
+ * 答疑多轮对话走 /api/llm 的对话模式（body 带 messages，见 docs/adr/0003）：
+ * 逐个产出增量，调用方拼累计文本；上游不支持流式时整段当单个增量补发（同
+ * callViaProxy 的降级路径）。流式能避开 Cloudflare 边缘的 100 秒超时（ADR-0002）。
+ */
+export async function* chatViaProxy(
+  cfg: LlmConfig,
+  system: string,
+  messages: readonly ChatTurn[],
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
+  const res = await fetch('/api/llm', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      type: cfg.type,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
+      apiKey: cfg.apiKey,
+      system,
+      messages,
+      stream: true,
+    }),
+    signal,
+  });
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!res.ok || !contentType.includes('text/event-stream')) {
+    const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
+    if (!res.ok) throw new Error(data?.error || `代理返回 ${res.status}`);
+    if (!data?.text) throw new Error('端点没有返回内容，重试一次通常就好');
+    yield data.text;
+    return;
+  }
+  let text = '';
+  for await (const delta of sseDeltas(res)) {
+    text += delta;
+    yield delta;
+  }
+  if (!text.trim()) throw new Error('端点没有返回内容，重试一次通常就好');
+}
+
+/**
+ * 出题的一次性生成（system + user，非对话模式）：代理默认以 SSE 流式转发
+ * （见 docs/adr/0002），慢模型不会被 Cloudflare 边缘掐成 524。onProgress
+ * 回调收到目前已累计的字符数。兼容旧版代理返回的完整 JSON（部署切换期 /
+ * 上游不支持流式时的降级路径）。
+ */
+async function callViaProxy(
+  cfg: LlmConfig,
+  system: string,
+  user: string,
+  onProgress?: (chars: number) => void,
+): Promise<string> {
+  const res = await fetch('/api/llm', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...cfg, system, user, stream: true }),
+  });
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!res.ok || !contentType.includes('text/event-stream')) {
+    const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
+    if (!res.ok) throw new Error(data?.error || `代理返回 ${res.status}`);
+    if (!data?.text) throw new Error('端点没有返回内容，重试一次通常就好');
+    return data.text;
+  }
+  return readSseText(res, onProgress);
 }
 
 /* ---------- 解析与入口 ---------- */
@@ -284,7 +311,7 @@ export async function generateExercises(
   onProgress?: (chars: number) => void,
 ): Promise<Exercise[]> {
   const cfg = loadConfig();
-  if (!cfg.apiKey.trim()) throw new Error('没有配置 API key，先点右上「出题设置」');
+  if (!cfg.apiKey.trim()) throw new Error('没有配置 API key，先点右上「AI 设置」');
 
   const user = buildPrompt(day, count, priorTasks);
   const text = await callViaProxy(cfg, SYSTEM, user, onProgress);

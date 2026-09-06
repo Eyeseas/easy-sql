@@ -1,4 +1,4 @@
-/** 「出题设置」弹窗的开关与读写。generator 在未配置时也会唤起它。 */
+/** 「AI 设置」弹窗的开关与读写（出题与答疑共用）。generator 与答疑面板在未配置时也会唤起它。 */
 import { loadConfig, saveConfig, clearConfig, type LlmEndpointType } from './llm';
 
 function dialog(): HTMLElement | null {
@@ -67,9 +67,9 @@ export function initLlmSettings(): void {
 
     const rawType = get('type');
     const cfg = {
-      type: (
-        rawType === 'openai' || rawType === 'codex' ? rawType : 'anthropic'
-      ) as LlmEndpointType,
+      type: (rawType === 'openai' || rawType === 'codex'
+        ? rawType
+        : 'anthropic') as LlmEndpointType,
       baseUrl: get('baseUrl'),
       model: get('model'),
       apiKey: get('apiKey'),

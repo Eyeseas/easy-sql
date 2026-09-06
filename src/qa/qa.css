@@ -1,0 +1,366 @@
+/*
+ * 答疑 island 的全部样式（ADR-0003：手写匹配终端美学，不引 Tailwind/shadcn）。
+ * 颜色与字体只用 tokens.css 的变量；按钮复用 base.css 的全局 .btn。
+ * 代码块的 token 配色由 base.css 的 .sql-code 提供（prismjs class）。
+ */
+
+.qa-root {
+  --qa-lift: 0px; /* 兜底横条可见时由 island 内联设置为横条高度 + 间隙 */
+}
+
+/* ---------- 悬浮按钮 ---------- */
+
+.qa-fab {
+  position: fixed;
+  right: 20px;
+  bottom: calc(20px + var(--qa-lift));
+  z-index: 45; /* 高于兜底横条/完课提示（40），低于设置弹窗（60） */
+  width: 46px;
+  height: 46px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--f-mono);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.qa-fab:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.qa-fab.is-open {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---------- 面板壳 ---------- */
+
+.qa-panel {
+  position: fixed;
+  right: 20px;
+  bottom: calc(78px + var(--qa-lift)); /* 悬浮按钮高度 + 间距 */
+  z-index: 45;
+  width: min(520px, calc(100vw - 40px));
+  height: min(75vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.qa-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  flex: none;
+}
+
+.qa-head-title {
+  font-family: var(--f-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.qa-head-close {
+  font-family: var(--f-mono);
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.qa-head-close:hover {
+  color: var(--accent);
+}
+
+/* ---------- 消息流 ---------- */
+
+.qa-thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.qa-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 14px;
+  overscroll-behavior: contain;
+}
+
+.qa-msg {
+  margin-bottom: 16px;
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.qa-msg.is-user {
+  margin-left: auto;
+  max-width: 85%;
+  width: fit-content;
+  padding: 8px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.qa-msg.is-user p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.qa-msg.is-assistant {
+  color: var(--ink);
+}
+
+/* 等首个增量到达时的输入中指示（MarkdownText 的空文本分支） */
+.qa-typing {
+  color: var(--ink-3);
+  font-family: var(--f-mono);
+  letter-spacing: 0.2em;
+  animation: qa-blink 1.2s steps(2) infinite;
+}
+
+@keyframes qa-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+.qa-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 2px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.qa-error-hint {
+  display: block;
+  color: var(--ink-2);
+}
+
+/* ---------- 回答的 markdown ---------- */
+
+.qa-md > :first-child {
+  margin-top: 0;
+}
+
+.qa-md > :last-child {
+  margin-bottom: 0;
+}
+
+.qa-md p {
+  margin: 0 0 10px;
+}
+
+.qa-md ul,
+.qa-md ol {
+  margin: 0 0 10px;
+  padding-left: 1.4em;
+}
+
+.qa-md li {
+  margin: 2px 0;
+}
+
+.qa-md h1,
+.qa-md h2,
+.qa-md h3,
+.qa-md h4 {
+  font-family: var(--f-body);
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 14px 0 6px;
+}
+
+.qa-md table {
+  border-collapse: collapse;
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+}
+
+.qa-md th,
+.qa-md td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+/* 行内代码（base.css 只覆盖了裸 code，这里对齐它的观感） */
+.qa-md :not(pre) > code {
+  font-family: var(--f-mono);
+  font-size: 0.78em;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+
+/* 代码块：CodeHeader（语言标签+复制）与高亮体上下拼成一块 */
+.qa-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding: 4px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  font-family: var(--f-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+
+.qa-copy {
+  font-family: var(--f-mono);
+  font-size: 0.66rem;
+  color: var(--ink-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
+.qa-copy:hover {
+  color: var(--accent);
+}
+
+/* pre 的底子样式来自 base.css 全局的 pre，这里只调圆角与内边距衔接头部 */
+.qa-code-pre {
+  border-radius: 0 0 2px 2px;
+  padding: 10px 14px;
+}
+
+/* ---------- 空态建议 ---------- */
+
+.qa-empty {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.qa-empty-title {
+  font-family: var(--f-mono);
+  font-size: 0.74rem;
+  color: var(--ink-3);
+  margin: 0 0 4px;
+}
+
+.qa-suggestion {
+  text-align: left;
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: 3px;
+  font-family: var(--f-body);
+  font-size: 0.84rem;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.qa-suggestion:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  border-style: solid;
+}
+
+/* ---------- 输入区 ---------- */
+
+.qa-composer {
+  flex: none;
+  border-top: 1px solid var(--line);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  background: var(--surface);
+}
+
+.qa-input {
+  font-family: var(--f-body);
+  font-size: 0.86rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 8px 10px;
+  resize: none;
+  width: 100%;
+  max-height: 8.5em; /* 与自动增高配合，别把面板顶穿 */
+}
+
+.qa-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.qa-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.qa-composer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.qa-composer-hint {
+  font-family: var(--f-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+/* ---------- 未配置引导 ---------- */
+
+.qa-guide {
+  padding: 18px 16px;
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  font-size: 0.86rem;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+/* ---------- 窄屏：面板变近全宽 bottom sheet（issue #7 Q6） ---------- */
+
+@media (max-width: 640px) {
+  .qa-panel {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    height: 70dvh;
+  }
+}

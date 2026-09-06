@@ -20,8 +20,8 @@ export default defineConfig([
     },
   },
   {
-    // 客户端脚本跑在浏览器里
-    files: ['src/scripts/**/*.ts'],
+    // 客户端脚本与答疑 island 跑在浏览器里
+    files: ['src/scripts/**/*.ts', 'src/qa/**/*.{ts,tsx}'],
     languageOptions: {
       globals: {
         window: 'readonly',
@@ -35,6 +35,7 @@ export default defineConfig([
         clearInterval: 'readonly',
         setTimeout: 'readonly',
         IntersectionObserver: 'readonly',
+        MutationObserver: 'readonly',
         HTMLElement: 'readonly',
         HTMLInputElement: 'readonly',
         HTMLButtonElement: 'readonly',
