@@ -5,6 +5,8 @@
  * CodeHeader（语言标签 + 复制按钮）与 SyntaxHighlighter（高亮体）。
  */
 import { useState } from 'react';
+import { AuiIf } from '@assistant-ui/react';
+import ThinkingOrbsPill from './ThinkingOrbsPill';
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown';
 import type { CodeHeaderProps, SyntaxHighlighterProps } from '@assistant-ui/react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -63,7 +65,13 @@ const codeComponents = {
  * 显示输入中指示，其余交给 MarkdownTextPrimitive（remark-gfm 支持表格等）。
  */
 export function MarkdownText({ text }: { text: string }) {
-  if (!text) return <span className="qa-typing">···</span>;
+  if (!text) {
+    return (
+      <AuiIf condition={(s) => s.message.status?.type === 'running'}>
+        <ThinkingOrbsPill style="rings" />
+      </AuiIf>
+    );
+  }
   return (
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm]}

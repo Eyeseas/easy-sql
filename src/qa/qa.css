@@ -131,24 +131,35 @@
   color: var(--ink);
 }
 
-/* 等首个增量到达时的输入中指示（MarkdownText 的空文本分支） */
-.qa-typing {
-  color: var(--ink-3);
-  font-family: var(--f-mono);
-  letter-spacing: 0.2em;
-  animation: qa-blink 1.2s steps(2) infinite;
+/* 首段回答到达前的 rings 点阵等待指示 */
+.qa-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 60px;
+  max-width: 100%;
+  padding: 7px 22px 7px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink);
+  vertical-align: top;
 }
 
-@keyframes qa-blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
+.qa-thinking canvas {
+  display: block;
+  flex: none;
+  width: 46px;
+  height: 46px;
+}
 
-  50%,
-  100% {
-    opacity: 0.25;
-  }
+.qa-thinking span {
+  min-width: 0;
+  font-family: var(--f-mono);
+  font-size: 14px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  opacity: 0.74;
 }
 
 .qa-error {
