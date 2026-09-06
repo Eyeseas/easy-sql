@@ -189,11 +189,36 @@ test('codex: requests the Responses API shape and relays output_text deltas', as
   assert.equal(seenBody.stream, true);
   assert.equal(seenBody.store, false);
   assert.equal(seenBody.instructions, 'system');
+  assert.equal(seenBody.reasoning, undefined); // 模型默认不注入 effort 或 summary
+  assert.equal(seenBody.reasoning_effort, undefined); // Responses 不用 Chat Completions 字段
+  assert.equal(seenBody.temperature, undefined);
+  assert.equal(seenBody.max_output_tokens, undefined);
   assert.deepEqual(seenBody.input, [
     { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user' }] },
   ]);
   // completed 事件里带了全文，但增量已发过，不能重复补发
   assert.deepEqual(events, ['data: {"text":"第一段"}', 'data: {"text":"第二段"}', 'data: [DONE]']);
+});
+
+test('codex: maps an explicit effort to reasoning.effort without summary or retries', async () => {
+  let calls = 0;
+  let seenBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    seenBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"type":"response.output_text.delta","delta":"完成"}\n\n',
+      'data: {"type":"response.completed","response":{"output":[]}}\n\n',
+    ]);
+  };
+
+  const response = await post('codex', { stream: true, reasoning: 'high' });
+  await readSse(response);
+
+  assert.equal(calls, 1);
+  assert.deepEqual(seenBody.reasoning, { effort: 'high' });
+  assert.equal(seenBody.reasoning_effort, undefined);
+  assert.equal((seenBody.reasoning as Record<string, unknown>).summary, undefined);
 });
 
 test('codex: accumulates the SSE stream for legacy non-stream clients', async () => {
@@ -385,9 +410,11 @@ test('chat mode: codex gets instructions plus input_text/output_text history', a
     ]);
   };
 
-  await postChat('codex');
+  await postChat('codex', { reasoning: 'low' });
 
   assert.equal(upstreamBody.instructions, 'system');
+  assert.deepEqual(upstreamBody.reasoning, { effort: 'low' });
+  assert.equal(upstreamBody.reasoning_effort, undefined);
   assert.deepEqual(upstreamBody.input, [
     { type: 'message', role: 'user', content: [{ type: 'input_text', text: '第一问' }] },
     { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '第一答' }] },
@@ -410,6 +437,51 @@ test('chat mode: rejects malformed messages with 400', async () => {
     messages: [{ role: 'user', content: '' }],
   });
   assert.equal(emptyContent.status, 400);
+});
+
+test('rejects invalid or incompatible reasoning before touching the upstream', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error('不应触达上游');
+  };
+
+  assert.equal((await post('codex', { reasoning: 'turbo' })).status, 400);
+  assert.equal((await post('anthropic', { reasoning: 'high' })).status, 400);
+  assert.equal(
+    (
+      await post('codex', {
+        model: 'gpt-5-codex',
+        reasoning: 'xhigh',
+      })
+    ).status,
+    400,
+  );
+  assert.equal(calls, 0);
+});
+
+test('allows a common effort for an unknown Codex model without retrying rejected requests', async () => {
+  const apiKey = 'secret-key-that-must-not-leak';
+  let calls = 0;
+  let seenBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    seenBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({ error: { message: `upstream rejected ${apiKey}` } }, { status: 400 });
+  };
+
+  const response = await post('codex', {
+    model: 'private-codex-alias',
+    apiKey,
+    reasoning: 'medium',
+  });
+  const body = (await response.json()) as { error?: string };
+
+  assert.equal(calls, 1);
+  assert.deepEqual(seenBody.reasoning, { effort: 'medium' });
+  assert.equal(response.status, 502);
+  assert.doesNotMatch(body.error ?? '', /secret-key-that-must-not-leak/);
+  assert.match(body.error ?? '', /<REDACTED>/);
 });
 
 test('one-shot mode still asks OpenAI-compatible endpoints for JSON mode', async () => {

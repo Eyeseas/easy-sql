@@ -3,12 +3,19 @@
 // 生成/答疑的引导唤起，具体逻辑在 src/scripts/llmSettings.ts。
 ---
 
-<div class="mask" data-llm-dialog hidden>
+<div
+  class="mask"
+  data-llm-dialog
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="llm-settings-title"
+  hidden
+>
   <div class="card dlg">
-    <h3>AI 端点设置</h3>
+    <h3 id="llm-settings-title">AI 设置</h3>
     <p class="hint">
-      请求由浏览器直发你填的端点，不经过任何中间服务器。配置存在本浏览器的 localStorage
-      里；留空保存则回到构建时 .env 的默认值。
+      配置与 key 只保存在本浏览器。出题和答疑请求会经本站 Worker
+      转发到所填端点；本站应用不在服务端持久化这些信息。
     </p>
 
     <div class="fields">
@@ -32,6 +39,14 @@
       </label>
 
       <label>
+        <span>思考等级</span>
+        <select data-llm-field="reasoning">
+          <option value="provider-default">模型默认（不发送推理参数）</option>
+        </select>
+        <small class="field-note" data-llm-reasoning-note aria-live="polite"></small>
+      </label>
+
+      <label>
         <span>API Key</span>
         <input type="password" data-llm-field="apiKey" placeholder="sk-..." autocomplete="off" />
       </label>
@@ -43,7 +58,7 @@
       <button class="btn" data-action="llm-close">关闭</button>
     </div>
 
-    <p class="status" data-llm-status></p>
+    <p class="status" data-llm-status aria-live="polite"></p>
   </div>
 </div>
 
@@ -65,7 +80,9 @@
   }
 
   .dlg {
-    width: min(440px, 100%);
+    width: min(480px, 100%);
+    max-height: calc(100dvh - 40px);
+    overflow-y: auto;
     padding: 26px 28px;
     display: grid;
     gap: 16px;
@@ -75,6 +92,21 @@
     color: var(--ink-3);
     font-size: 0.8rem;
     line-height: 1.6;
+  }
+
+  .hint,
+  .field-note,
+  .status {
+    overflow-wrap: anywhere;
+  }
+
+  .field-note {
+    color: var(--ink-3);
+    font-family: var(--f-body);
+    font-size: 0.72rem;
+    letter-spacing: 0;
+    line-height: 1.5;
+    text-transform: none;
   }
 
   .fields {

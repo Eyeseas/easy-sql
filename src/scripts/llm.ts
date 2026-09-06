@@ -1,6 +1,6 @@
 /**
  * LLM 共享层：出题与答疑两个功能共用（术语见 CONTEXT.md）。端点类型/地址/模型/
- * key 存在 localStorage（AI 设置），默认值来自构建时 .env 的 PUBLIC_LLM_*
+ * key/思考等级存在 localStorage（AI 设置），默认值来自构建时 .env 的 PUBLIC_LLM_*
  * （会被打进前端产物，只在自己部署时填 key）。
  *
  * 实际转发由同站点的服务端代理 /api/llm 完成（见 src/pages/api/llm.ts）：各种
@@ -11,16 +11,22 @@
  */
 import { z } from 'zod';
 import { schemaForPrompt, dataFactsForDay } from '../data/schema';
+import {
+  DEFAULT_REASONING,
+  normalizeReasoning,
+  reasoningSupport,
+  type LlmEndpointType,
+  type ReasoningLevel,
+} from '../shared/llmConfig';
 import type { LearnEntry } from '../types/curriculum';
 import { stripTags, learnForPrompt } from '../utils/promptText';
-
-export type LlmEndpointType = 'anthropic' | 'openai' | 'codex';
 
 export interface LlmConfig {
   type: LlmEndpointType;
   baseUrl: string;
   model: string;
   apiKey: string;
+  reasoning: ReasoningLevel;
 }
 
 const KEY = 'sql8w.llm.v1';
@@ -47,7 +53,7 @@ export interface ChatTurn {
 }
 
 function defaults(): LlmConfig {
-  const env = import.meta.env;
+  const env = import.meta.env ?? {};
   const type =
     env.PUBLIC_LLM_TYPE === 'openai' || env.PUBLIC_LLM_TYPE === 'codex'
       ? env.PUBLIC_LLM_TYPE
@@ -61,7 +67,18 @@ function defaults(): LlmConfig {
       env.PUBLIC_LLM_MODEL ||
       (type === 'openai' ? 'gpt-5' : type === 'codex' ? 'gpt-5-codex' : 'claude-opus-5'),
     apiKey: env.PUBLIC_LLM_API_KEY || '',
+    reasoning: DEFAULT_REASONING,
   };
+}
+
+function normalizedConfig(input: Partial<LlmConfig>): LlmConfig {
+  const merged = { ...defaults(), ...input };
+  merged.type = merged.type === 'openai' || merged.type === 'codex' ? merged.type : 'anthropic';
+  merged.reasoning = normalizeReasoning(input.reasoning);
+  if (reasoningSupport(merged.type, merged.model, merged.reasoning) === 'unsupported') {
+    merged.reasoning = DEFAULT_REASONING;
+  }
+  return merged;
 }
 
 export function loadConfig(): LlmConfig {
@@ -69,16 +86,14 @@ export function loadConfig(): LlmConfig {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaults();
     const saved = JSON.parse(raw) as Partial<LlmConfig>;
-    const merged = { ...defaults(), ...saved };
-    merged.type = merged.type === 'openai' || merged.type === 'codex' ? merged.type : 'anthropic';
-    return merged;
+    return normalizedConfig(saved);
   } catch {
     return defaults();
   }
 }
 
 export function saveConfig(cfg: LlmConfig): void {
-  localStorage.setItem(KEY, JSON.stringify(cfg));
+  localStorage.setItem(KEY, JSON.stringify(normalizedConfig(cfg)));
 }
 
 /** 清掉浏览器里的设置，回到 .env 注入的构建时默认值 */
@@ -257,6 +272,7 @@ export async function* chatViaProxy(
       baseUrl: cfg.baseUrl,
       model: cfg.model,
       apiKey: cfg.apiKey,
+      reasoning: cfg.reasoning,
       system,
       messages,
       stream: true,

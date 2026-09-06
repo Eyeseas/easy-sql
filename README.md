@@ -18,11 +18,11 @@ cp .env.example .env
 # 填 PUBLIC_LLM_*（端点类型 / 端点地址 / 模型，key 建议留空）
 ```
 
-也可以完全不碰 `.env`：站点右上角「出题设置」里直接填，存在浏览器 localStorage。
+也可以完全不碰 `.env`：站点右上角「AI 设置」里直接填，配置与 key 存在浏览器 localStorage。
 注意 `PUBLIC_` 前缀的值会被打进前端产物，公开部署时 key 一定留空、走设置窗。
 
 ```bash
-pnpm build        # 构建静态页 + Worker（/api/llm 出题代理）
+pnpm build        # 构建静态页 + Worker（/api/llm AI 代理）
 pnpm preview      # wrangler dev：本地用真 workerd 跑构建产物
 pnpm run deploy   # 构建并部署到 Cloudflare Workers（需 wrangler login）
 pnpm typecheck    # astro check（TS strict）
@@ -64,7 +64,7 @@ src/
 │  ├─ meta.ts              标题、时间盒说明、复习制度、产出物清单
 │  └─ selftest.ts          24 题高频考点自测
 ├─ components/             WeeksOverview / WeekSection / DayCard / DayFocus / 各 Section
-├─ scripts/                客户端逻辑（进度、计时器、生成器、视图切换、LLM 直连）
+├─ scripts/                客户端逻辑（进度、计时器、视图切换、AI 设置与出题）
 ├─ styles/                 tokens.css（三态主题令牌）+ base.css
 └─ pages/
    ├─ index.astro          总览页（方法论 + 八周概览）
@@ -73,7 +73,7 @@ src/
 seed.sql                   分阶段灌数脚本（§A~§F 对应上线的那些天）
 ```
 
-**渲染模式**：纯静态，没有任何服务端代码，GitHub Pages 之类直接托管。LLM 出题由浏览器直连用户配置的端点（`src/scripts/llm.ts`），端点类型 / 地址 / 模型在 `.env` 给构建时默认值，浏览器里的「出题设置」可覆盖。出题时只喂「截至当天已上线的表」，不会出还没学到的表。
+**渲染模式**：课程页面静态生成，LLM 请求由同站点 Cloudflare Worker 的 `/api/llm` 转发。端点类型 / 地址 / 模型可由 `.env` 提供构建时默认值，浏览器里的「AI 设置」可覆盖；配置与 key 只存在浏览器，请求时经 Worker 透传，应用不在服务端持久化。
 
 ## 改内容
 
@@ -97,11 +97,13 @@ seed.sql                   分阶段灌数脚本（§A~§F 对应上线的那些
 
 测评日想换掉「学 / 练」两栏的标题，加 `learnLabel` / `drillLabel` 即可。
 
-## 两个功能
+## 三个功能
 
 **学习计时器**：点某天的「开始今天」，按该天的 `split` 依次跑三个阶段，自动推进并提示音 + 系统通知，剩余时间常驻标签页标题。计时靠时间戳差值算而不是 `setInterval` 累加 -- 后台标签页的定时器会被浏览器节流，累加法必然走偏。关掉页面再打开会接着上次继续，中间经过的时间照常扣。
 
-**生成补充练习**：把当天的剧情、知识点（含示例 SQL）、已有练习、已学范围、数据口径（状态值 / 脏数据 / 量级）和**已上线的表结构**（页面里 `#gen-context` JSON 注入）一起发给配置的端点，拿回 `{题目, 提示, 参考答案, 自查点}`，zod 校验形状。支持 Anthropic 原生协议和 OpenAI 兼容协议，所以官方、中转、one-api 都能用。重新生成时会把上一批题目传回去防撞题。结果按天缓存在本地，可复制成 Markdown。想换模型在「出题设置」里改，或改 `.env` 的 `PUBLIC_LLM_MODEL`。
+**生成补充练习**：把当天的剧情、知识点（含示例 SQL）、已有练习、已学范围、数据口径（状态值 / 脏数据 / 量级）和**已上线的表结构**（页面里 `#gen-context` JSON 注入）一起发给配置的端点，拿回 `{题目, 提示, 参考答案, 自查点}`，zod 校验形状。支持 Anthropic、OpenAI 兼容与 Codex / Responses 端点。重新生成时会把上一批题目传回去防撞题；结果按天缓存在本地，可复制成 Markdown。
+
+**答疑**：天页的问答面板只围绕当天课程和已学范围回答，多轮上下文仅在当前页面会话中保留，刷新即清空。答疑与出题共用「AI 设置」；Codex 端点可选择模型默认或已开放的思考等级，新设置从下一次请求生效。
 
 ## 数据存哪
 

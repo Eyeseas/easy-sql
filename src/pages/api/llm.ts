@@ -1,5 +1,5 @@
 /**
- * LLM 出题代理：浏览器把端点配置（type/baseUrl/model/apiKey）和提示词 POST 到这里，
+ * LLM 出题代理：浏览器把端点配置（type/baseUrl/model/apiKey/reasoning）和提示词 POST 到这里，
  * 由服务端转发给 LLM 端点（部署在 Cloudflare Workers 上，见 wrangler.jsonc；代码
  * 只用 Web 标准 API，本地 Node 跑也行）。服务端之间没有 CORS 限制，浏览器直连
  * 各种中转 / 兼容端点缺 CORS 头的问题就此解决。
@@ -21,6 +21,7 @@
  */
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
+import { DEFAULT_REASONING, REASONING_LEVELS, reasoningSupport } from '../../shared/llmConfig';
 
 export const prerender = false;
 
@@ -29,6 +30,7 @@ const BodySchema = z.object({
   baseUrl: z.url(),
   model: z.string().min(1),
   apiKey: z.string().min(1),
+  reasoning: z.enum(REASONING_LEVELS).default(DEFAULT_REASONING),
   system: z.string(),
   /** 一次性生成的用户提示词（出题）。对话模式（messages）下不需要 */
   user: z.string().optional(),
@@ -53,6 +55,12 @@ export const POST: APIRoute = async ({ request }) => {
     return Response.json({ error: '请求参数不对' }, { status: 400 });
   }
   const cfg = parsed.data;
+  if (reasoningSupport(cfg.type, cfg.model, cfg.reasoning) === 'unsupported') {
+    return Response.json(
+      { error: '所选思考等级与当前端点或模型不兼容，请在 AI 设置中改用模型默认' },
+      { status: 400 },
+    );
+  }
   // 出题走 system + user 一次性生成；答疑走 system + messages 多轮。两者必居其一
   if (!cfg.messages && cfg.user === undefined) {
     return Response.json({ error: '请求参数不对' }, { status: 400 });
@@ -61,7 +69,7 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     return Response.json({ text: await runUpstream(cfg, false, () => {}, request.signal) });
   } catch (e) {
-    return Response.json({ error: errorMessage(e) }, { status: 502 });
+    return Response.json({ error: errorMessage(e, cfg.apiKey) }, { status: 502 });
   }
 };
 
@@ -136,7 +144,7 @@ function relayAsStream(cfg: Body, requestSignal: AbortSignal): Response {
             abortUpstream(e);
             if (!canceled) {
               try {
-                write(`data: ${JSON.stringify({ error: errorMessage(e) })}\n\n`);
+                write(`data: ${JSON.stringify({ error: errorMessage(e, cfg.apiKey) })}\n\n`);
               } catch {
                 /* 浏览器已断开 */
               }
@@ -185,8 +193,10 @@ function asObject(value: unknown): JsonObject | null {
     : null;
 }
 
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+function errorMessage(e: unknown, apiKey: string): string {
+  const message = e instanceof Error ? e.message : String(e);
+  const secret = apiKey.trim();
+  return secret ? message.split(secret).join('<REDACTED>') : message;
 }
 
 function errorDetail(data: JsonObject): string {
@@ -311,6 +321,7 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
         },
         body: JSON.stringify({
           model: cfg.model,
+          ...(cfg.reasoning === DEFAULT_REASONING ? {} : { reasoning: { effort: cfg.reasoning } }),
           instructions: cfg.system,
           input: chat
             ? chat.map((m) => ({
