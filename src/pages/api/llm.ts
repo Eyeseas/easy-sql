@@ -6,7 +6,7 @@
  *
  * 端点类型三种：anthropic（Messages API）、openai（Chat Completions 兼容中转）、
  * codex（OpenAI Responses API，即 Codex 系端点；一律向上游要流式，契约见
- * upstreamRequest 里的注释）。
+ * codexRequest 里的注释）。
  *
  * body 带 stream: true 时走 SSE 流式转发（见 docs/adr/0002）：Cloudflare 边缘对
  * 「迟迟不吐字节」的响应只等约 100 秒，非流式代理慢模型（推理模型动辄一两分钟）
@@ -24,10 +24,10 @@ import { z } from 'zod';
 import {
   DEFAULT_REASONING,
   REASONING_LEVELS,
-  knownReasoningCapability,
   reasoningConfigurationError,
 } from '../../shared/llmConfig';
 import { runAnthropicUpstream } from '../../server/llm/anthropic';
+import { runOpenAiUpstream } from '../../server/llm/openai';
 
 export const prerender = false;
 
@@ -71,7 +71,7 @@ export const POST: APIRoute = async ({ request }) => {
   }
   if (cfg.stream) return relayAsStream(cfg, request.signal);
   try {
-    return Response.json({ text: await runUpstream(cfg, false, () => {}, request.signal) });
+    return Response.json({ text: await runUpstream(cfg, () => {}, request.signal) });
   } catch (e) {
     return Response.json({ error: errorMessage(e, cfg.apiKey) }, { status: 502 });
   }
@@ -132,7 +132,6 @@ function relayAsStream(cfg: Body, requestSignal: AbortSignal): Response {
             let sent = '';
             const text = await runUpstream(
               cfg,
-              true,
               (delta) => {
                 sent += delta;
                 write(`data: ${JSON.stringify({ text: delta })}\n\n`);
@@ -282,65 +281,15 @@ function elapsed(startedAt: number): string {
   return `耗时 ${((Date.now() - startedAt) / 1000).toFixed(1)} 秒`;
 }
 
-function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: RequestInit } {
-  if (cfg.type === 'anthropic') throw new Error('Anthropic requests must use the AI SDK upstream');
-  const streamField = stream ? { stream: true } : {};
-  // 对话模式（答疑多轮）：user 一次性提示词换成完整对话历史；不设 response_format
+function codexRequest(cfg: Body): { url: string; init: RequestInit } {
   const chat = cfg.messages ?? null;
-  if (cfg.type === 'codex') {
-    // ChatGPT Codex 后端的硬性契约：instructions 必须是顶层字符串、store 必须
-    // false、只收流式；temperature / max_output_tokens 会被直接拒（订阅侧自己
-    // 限长）。所以只带它认识的最小字段集——官方 api.openai.com 的 Responses API
-    // 同样接受这个形状。stream 参数在这里被无视：codex 端点没有非流式可用，
-    // 旧客户端的整段 JSON 请求由服务端自己攒流实现。多轮历史里 user 回合用
-    // input_text、assistant 回合用 output_text（Responses API 的对话形状）
-    return {
-      url: joinUrl(cfg.baseUrl, '/v1/responses'),
-      init: {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${cfg.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: cfg.model,
-          ...(cfg.reasoning === DEFAULT_REASONING ? {} : { reasoning: { effort: cfg.reasoning } }),
-          instructions: cfg.system,
-          input: chat
-            ? chat.map((m) => ({
-                type: 'message',
-                role: m.role,
-                content: [
-                  { type: m.role === 'user' ? 'input_text' : 'output_text', text: m.content },
-                ],
-              }))
-            : [
-                {
-                  type: 'message',
-                  role: 'user',
-                  content: [{ type: 'input_text', text: cfg.user ?? '' }],
-                },
-              ],
-          stream: true,
-          store: false,
-        }),
-      },
-    };
-  }
-  // Only verified OpenAI models with an explicit effort switch token fields. Provider-default
-  // and unknown compatible gateways retain the existing max_tokens request shape.
-  const openAiCapability = knownReasoningCapability(cfg.type, cfg.model);
-  const useMaxCompletionTokens =
-    cfg.reasoning !== DEFAULT_REASONING &&
-    openAiCapability?.endpointType === 'openai' &&
-    openAiCapability.chatCompletionTokenField === 'max_completion_tokens';
-  const completionLimit = useMaxCompletionTokens
-    ? {
-        max_completion_tokens: Math.min(8_000, openAiCapability.maxOutputTokens ?? 8_000),
-      }
-    : { max_tokens: 8_000 };
+  // ChatGPT Codex 后端的硬性契约：instructions 必须是顶层字符串、store 必须
+  // false、只收流式；temperature / max_output_tokens 会被直接拒（订阅侧自己
+  // 限长）。所以只带它认识的最小字段集——官方 api.openai.com 的 Responses API
+  // 同样接受这个形状。旧客户端的整段 JSON 请求由服务端自己攒流实现。多轮
+  // 历史里 user 回合用 input_text、assistant 回合用 output_text。
   return {
-    url: joinUrl(cfg.baseUrl, '/chat/completions'),
+    url: joinUrl(cfg.baseUrl, '/v1/responses'),
     init: {
       method: 'POST',
       headers: {
@@ -349,20 +298,25 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
       },
       body: JSON.stringify({
         model: cfg.model,
-        ...completionLimit,
-        ...(cfg.reasoning === DEFAULT_REASONING ? {} : { reasoning_effort: cfg.reasoning }),
-        ...streamField,
-        // JSON mode 是出题（一次性生成、要解析成练习 JSON）才需要的；答疑对话要自由文本
-        ...(chat ? {} : { response_format: { type: 'json_object' } }),
-        messages: chat
-          ? [
-              { role: 'system', content: cfg.system },
-              ...chat.map((m) => ({ role: m.role, content: m.content })),
-            ]
+        ...(cfg.reasoning === DEFAULT_REASONING ? {} : { reasoning: { effort: cfg.reasoning } }),
+        instructions: cfg.system,
+        input: chat
+          ? chat.map((m) => ({
+              type: 'message',
+              role: m.role,
+              content: [
+                { type: m.role === 'user' ? 'input_text' : 'output_text', text: m.content },
+              ],
+            }))
           : [
-              { role: 'system', content: cfg.system },
-              { role: 'user', content: cfg.user ?? '' },
+              {
+                type: 'message',
+                role: 'user',
+                content: [{ type: 'input_text', text: cfg.user ?? '' }],
+              },
             ],
+        stream: true,
+        store: false,
       }),
     },
   };
@@ -374,25 +328,26 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
  */
 async function runUpstream(
   cfg: Body,
-  stream: boolean,
   onDelta: (delta: string) => void,
   signal: AbortSignal,
 ): Promise<string> {
   signal.throwIfAborted();
-  const startedAt = Date.now();
   if (cfg.type === 'anthropic') {
     return runAnthropicUpstream(cfg, onDelta, signal);
   }
-  const { url, init } = upstreamRequest(cfg, stream);
+  if (cfg.type === 'openai') {
+    return runOpenAiUpstream(cfg, onDelta, signal);
+  }
+
+  const startedAt = Date.now();
+  const { url, init } = codexRequest(cfg);
   const { response: res, release } = await fetchEndpoint(url, init, signal);
   try {
     signal.throwIfAborted();
     if (res.ok && (res.headers.get('content-type') ?? '').includes('text/event-stream')) {
-      return await relaySse(res, cfg.type, onDelta, startedAt, signal);
+      return await relayCodexSse(res, onDelta, startedAt, signal);
     }
-    return cfg.type === 'codex'
-      ? await parseResponsesJson(res, startedAt, signal)
-      : await parseOpenAiJson(res, startedAt, signal);
+    return await parseResponsesJson(res, startedAt, signal);
   } finally {
     if (signal.aborted && res.body && !res.body.locked) {
       try {
@@ -499,9 +454,8 @@ function responsesText(resp: JsonObject | null): string {
 }
 
 /** 解析上游 SSE，边转发边攒全文；流里的错误、截断、提前断开都抛 Error */
-async function relaySse(
+async function relayCodexSse(
   res: Response,
-  type: 'openai' | 'codex',
   onDelta: (delta: string) => void,
   startedAt: number,
   signal: AbortSignal,
@@ -510,8 +464,6 @@ async function relaySse(
   let text = '';
   let completed = false;
   let sawReasoning = false;
-  let refusal = '';
-  let finishNote = '';
 
   for await (const data of sseData(res.body, signal)) {
     if (data === '[DONE]') {
@@ -521,135 +473,62 @@ async function relaySse(
     const obj = parseJsonObject(data);
     if (!obj) continue;
 
-    if (type === 'openai') {
-      if (obj.error !== undefined) {
-        throw new Error(`端点在流里报错：${errorDetail(obj) || '未知错误'}`);
-      }
-      const choice = asObject(Array.isArray(obj.choices) ? obj.choices[0] : undefined);
-      const delta = asObject(choice?.delta);
-      const piece = typeof delta?.content === 'string' ? delta.content : '';
+    // Responses API 的流事件：type 是 response.xxx，文本在 response.output_text.delta
+    if (obj.error !== undefined) {
+      throw new Error(`端点在流里报错：${errorDetail(obj) || '未知错误'}`);
+    }
+    const kind = typeof obj.type === 'string' ? obj.type : '';
+    if (kind === 'error') {
+      throw new Error(`端点在流里报错：${errorDetail(obj) || '未知错误'}`);
+    }
+    if (kind === 'response.failed') {
+      const resp = asObject(obj.response);
+      throw new Error(`端点在流里报错：${errorDetail(resp ?? obj) || '未知错误'}`);
+    }
+    if (kind === 'response.incomplete') {
+      const reason = asObject(asObject(obj.response)?.incomplete_details)?.reason;
+      throw new Error(
+        `输出不完整（incomplete：${typeof reason === 'string' ? reason : '未知原因'}）`,
+      );
+    }
+    if (kind === 'response.output_text.delta') {
+      const piece = typeof obj.delta === 'string' ? obj.delta : '';
       if (piece) {
         text += piece;
         onDelta(piece);
       }
-      if (typeof delta?.reasoning_content === 'string' && delta.reasoning_content.trim()) {
-        sawReasoning = true;
-      }
-      if (typeof delta?.refusal === 'string' && delta.refusal.trim()) refusal = delta.refusal;
-      const finish = typeof choice?.finish_reason === 'string' ? choice.finish_reason : '';
-      if (finish) {
-        finishNote = `finish_reason=${finish}`;
-        if (finish === 'length') {
-          throw new Error('输出达到 token 上限并被截断（finish_reason=length），JSON 不完整');
-        }
-      }
       continue;
     }
-
-    if (type === 'codex') {
-      // Responses API 的流事件：type 是 response.xxx，文本在 response.output_text.delta
-      if (obj.error !== undefined) {
-        throw new Error(`端点在流里报错：${errorDetail(obj) || '未知错误'}`);
-      }
-      const kind = typeof obj.type === 'string' ? obj.type : '';
-      if (kind === 'error') {
-        throw new Error(`端点在流里报错：${errorDetail(obj) || '未知错误'}`);
-      }
-      if (kind === 'response.failed') {
-        const resp = asObject(obj.response);
-        throw new Error(`端点在流里报错：${errorDetail(resp ?? obj) || '未知错误'}`);
-      }
-      if (kind === 'response.incomplete') {
-        const reason = asObject(asObject(obj.response)?.incomplete_details)?.reason;
-        throw new Error(
-          `输出不完整（incomplete：${typeof reason === 'string' ? reason : '未知原因'}）`,
-        );
-      }
-      if (kind === 'response.output_text.delta') {
-        const piece = typeof obj.delta === 'string' ? obj.delta : '';
-        if (piece) {
-          text += piece;
-          onDelta(piece);
-        }
-        continue;
-      }
-      if (
-        kind === 'response.reasoning_summary_text.delta' ||
-        kind === 'response.reasoning_text.delta'
-      ) {
-        sawReasoning = true;
-        continue;
-      }
-      if (kind === 'response.completed') {
-        completed = true;
-        // 个别中转只发 completed 不发增量：从完整 response 对象里整段补上
-        const full = responsesText(asObject(obj.response));
-        if (!text && full) {
-          text = full;
-          onDelta(full);
-        }
-        break;
-      }
-      continue; // response.created / output_item.* / content_part.* 等过程事件
+    if (
+      kind === 'response.reasoning_summary_text.delta' ||
+      kind === 'response.reasoning_text.delta'
+    ) {
+      sawReasoning = true;
+      continue;
     }
+    if (kind === 'response.completed') {
+      completed = true;
+      // 个别中转只发 completed 不发增量：从完整 response 对象里整段补上
+      const full = responsesText(asObject(obj.response));
+      if (!text && full) {
+        text = full;
+        onDelta(full);
+      }
+      break;
+    }
+    continue; // response.created / output_item.* / content_part.* 等过程事件
   }
 
   if (!completed) throw new Error(`上游提前断开，响应不完整（${elapsed(startedAt)}）`);
   if (!text.trim()) {
     const details = [elapsed(startedAt)];
-    if (finishNote) details.push(finishNote);
-    if (sawReasoning) details.push('只返回了 reasoning_content，没有最终答案');
-    if (refusal) details.push(`模型拒绝：${refusal}`);
+    if (sawReasoning) details.push('只返回了 reasoning，没有最终答案');
     throw new Error(`端点返回 ${res.status}，但流里没有任何文本（${details.join('，')}）`);
   }
   return text;
 }
 
-/* ---------- 上游完整 JSON 响应（不支持流式的中转 / 直接报错） ---------- */
-
-async function parseOpenAiJson(
-  res: Response,
-  startedAt: number,
-  signal: AbortSignal,
-): Promise<string> {
-  const data = await readJson(res, signal);
-  const choices = Array.isArray(data.choices) ? data.choices : [];
-  const choice = asObject(choices[0]);
-  const message = asObject(choice?.message);
-  const failure = endpointError(res, data, choice !== null);
-  if (failure) throw failure;
-
-  const content = message?.content;
-  const text =
-    typeof content === 'string'
-      ? content
-      : Array.isArray(content)
-        ? content
-            .map(asObject)
-            .map((part) => (typeof part?.text === 'string' ? part.text : ''))
-            .join('')
-        : typeof choice?.text === 'string'
-          ? choice.text
-          : typeof data.output_text === 'string'
-            ? data.output_text
-            : '';
-
-  if (!text.trim()) {
-    const details = [elapsed(startedAt)];
-    if (typeof choice?.finish_reason === 'string')
-      details.push(`finish_reason=${choice.finish_reason}`);
-    if (typeof message?.reasoning_content === 'string' && message.reasoning_content.trim()) {
-      details.push('只返回了 reasoning_content，没有最终答案');
-    }
-    if (typeof message?.refusal === 'string' && message.refusal.trim()) {
-      details.push(`模型拒绝：${message.refusal}`);
-    }
-    throw new Error(
-      `端点返回 ${res.status}，但 choices[0].message.content 为空（${details.join('，')}）`,
-    );
-  }
-  return text;
-}
+/* ---------- 上游完整 JSON 响应（Codex 非标准兼容 / 直接报错） ---------- */
 
 async function parseResponsesJson(
   res: Response,

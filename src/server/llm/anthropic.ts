@@ -1,5 +1,15 @@
 import { createAnthropic, type AnthropicLanguageModelOptions } from '@ai-sdk/anthropic';
-import { streamText } from 'ai';
+import { streamText, type CallWarning } from 'ai';
+import {
+  asObject,
+  consumeSdkTextStream,
+  elapsed,
+  errorDetail,
+  fetchSdkEndpoint,
+  readResponseText,
+  responseWithTrackedBody,
+  type JsonObject,
+} from './sdk';
 import {
   DEFAULT_REASONING,
   anthropicRequestConfig,
@@ -7,7 +17,6 @@ import {
 } from '../../shared/llmConfig';
 
 const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
-const UPSTREAM_TIMEOUT_MS = 180_000;
 
 interface AnthropicMessage {
   readonly role: 'user' | 'assistant';
@@ -24,21 +33,6 @@ export interface AnthropicUpstreamConfig {
   readonly messages?: readonly AnthropicMessage[];
 }
 
-interface JsonObject {
-  [key: string]: unknown;
-}
-
-interface EndpointResponse {
-  readonly response: Response;
-  readonly release: () => void;
-}
-
-function asObject(value: unknown): JsonObject | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as JsonObject)
-    : null;
-}
-
 function joinUrl(base: string, path: string): string {
   const normalized = base.trim().replace(/\/+$/, '');
   if (normalized.endsWith(path)) return normalized;
@@ -51,140 +45,6 @@ function joinUrl(base: string, path: string): string {
 function anthropicBaseUrl(baseUrl: string): string {
   const endpoint = joinUrl(baseUrl, ANTHROPIC_MESSAGES_PATH);
   return endpoint.slice(0, -'/messages'.length);
-}
-
-function elapsed(startedAt: number): string {
-  return `耗时 ${((Date.now() - startedAt) / 1000).toFixed(1)} 秒`;
-}
-
-function errorDetail(data: JsonObject): string {
-  const error = data.error;
-  if (typeof error === 'string') return error;
-  const nestedMessage = asObject(error)?.message;
-  if (typeof nestedMessage === 'string') return nestedMessage;
-  return typeof data.message === 'string' ? data.message : '';
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-async function fetchEndpoint(
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  signal: AbortSignal,
-): Promise<EndpointResponse> {
-  signal.throwIfAborted();
-  const controller = new AbortController();
-  let timedOut = false;
-  let released = false;
-  const onAbort = (): void => controller.abort(signal.reason);
-  const release = (): void => {
-    if (released) return;
-    released = true;
-    signal.removeEventListener('abort', onAbort);
-  };
-
-  signal.addEventListener('abort', onAbort, { once: true });
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, UPSTREAM_TIMEOUT_MS);
-
-  try {
-    const response = await globalThis.fetch(input, { ...init, signal: controller.signal });
-    return { response, release };
-  } catch (error) {
-    release();
-    signal.throwIfAborted();
-    if (timedOut && controller.signal.aborted) {
-      throw new Error(`端点请求超过 ${UPSTREAM_TIMEOUT_MS / 1000} 秒，已取消`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function responseWithTrackedBody(
-  response: Response,
-  release: () => void,
-  signal: AbortSignal,
-): Response {
-  if (!response.body) {
-    release();
-    return response;
-  }
-
-  const reader = response.body.getReader();
-  let settled = false;
-  const finish = (): void => {
-    if (settled) return;
-    settled = true;
-    signal.removeEventListener('abort', cancelReader);
-    try {
-      reader.releaseLock();
-    } finally {
-      release();
-    }
-  };
-  const cancelReader = (): void => {
-    void reader
-      .cancel(signal.reason)
-      .catch(() => {})
-      .finally(finish);
-  };
-  signal.addEventListener('abort', cancelReader, { once: true });
-  if (signal.aborted) cancelReader();
-
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          finish();
-          controller.close();
-        } else {
-          controller.enqueue(chunk.value);
-        }
-      } catch (error) {
-        finish();
-        controller.error(error);
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        finish();
-      }
-    },
-  });
-
-  return new Response(body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
-}
-
-async function readResponseText(
-  response: Response,
-  release: () => void,
-  signal: AbortSignal,
-): Promise<string> {
-  const tracked = responseWithTrackedBody(response, release, signal);
-  try {
-    return await tracked.text();
-  } finally {
-    if (tracked.body && !tracked.body.locked) {
-      try {
-        await tracked.body.cancel();
-      } catch {
-        // The body is already complete or was cancelled by the request signal.
-      }
-    }
-  }
 }
 
 function anthropicErrorResponse(message: string, status: number): Response {
@@ -286,14 +146,7 @@ async function adaptAnthropicResponse(
   return anthropicJsonAsSse(data, model);
 }
 
-export type AnthropicSdkWarning =
-  | {
-      readonly type: 'unsupported' | 'compatibility';
-      readonly feature: string;
-      readonly details?: string;
-    }
-  | { readonly type: 'deprecated'; readonly setting: string; readonly message: string }
-  | { readonly type: 'other'; readonly message: string };
+export type AnthropicSdkWarning = CallWarning;
 
 function warningDescription(warning: AnthropicSdkWarning): string {
   if (warning.type === 'deprecated') return `${warning.setting}: ${warning.message}`;
@@ -362,7 +215,7 @@ export async function runAnthropicUpstream(
     apiKey: cfg.apiKey,
     baseURL: anthropicBaseUrl(cfg.baseUrl),
     fetch: async (input, init) => {
-      const { response, release } = await fetchEndpoint(input, init, signal);
+      const { response, release } = await fetchSdkEndpoint(input, init, signal);
       return adaptAnthropicResponse(response, release, cfg.model, signal);
     },
   });
@@ -382,62 +235,31 @@ export async function runAnthropicUpstream(
     include: { rawChunks: true },
   });
 
-  let text = '';
-  let sawReasoning = false;
   let sawMessageStop = false;
-  let finishReason: string | undefined;
-  let rawFinishReason: string | undefined;
+  const outcome = await consumeSdkTextStream({
+    stream: result.stream,
+    signal,
+    onDelta,
+    onWarnings: (warnings) => assertReasoningWarnings(warnings, cfg.reasoning),
+    onRaw: (rawValue) => {
+      if (asObject(rawValue)?.type === 'message_stop') sawMessageStop = true;
+    },
+  });
 
-  for await (const part of result.stream) {
-    signal.throwIfAborted();
-    switch (part.type) {
-      case 'start-step':
-        assertReasoningWarnings(part.warnings, cfg.reasoning);
-        break;
-      case 'raw': {
-        const raw = asObject(part.rawValue);
-        if (raw?.type === 'message_stop') sawMessageStop = true;
-        break;
-      }
-      case 'reasoning-start':
-      case 'reasoning-delta':
-        sawReasoning = true;
-        break;
-      case 'text-delta':
-        if (part.text) {
-          text += part.text;
-          onDelta(part.text);
-        }
-        break;
-      case 'finish':
-        finishReason = part.finishReason;
-        rawFinishReason = part.rawFinishReason;
-        break;
-      case 'error':
-        throw new Error(`端点在流里报错：${errorText(part.error)}`);
-      case 'abort':
-        signal.throwIfAborted();
-        throw new Error('上游生成已取消');
-      default:
-        break;
-    }
-  }
-
-  signal.throwIfAborted();
   if (!sawMessageStop) {
     throw new Error(`上游提前断开，响应不完整（${elapsed(startedAt)}）`);
   }
-  if (finishReason !== 'stop') {
-    const raw = rawFinishReason ? `，stop_reason=${rawFinishReason}` : '';
-    if (finishReason === 'length') {
+  if (outcome.finishReason !== 'stop') {
+    const raw = outcome.rawFinishReason ? `，stop_reason=${outcome.rawFinishReason}` : '';
+    if (outcome.finishReason === 'length') {
       throw new Error(`输出达到 token 上限并被截断（finish_reason=length${raw}），JSON 不完整`);
     }
-    throw new Error(`上游未正常结束（finish_reason=${finishReason ?? 'missing'}${raw}）`);
+    throw new Error(`上游未正常结束（finish_reason=${outcome.finishReason ?? 'missing'}${raw}）`);
   }
-  if (!text.trim()) {
+  if (!outcome.text.trim()) {
     const details = [elapsed(startedAt)];
-    if (sawReasoning) details.push('只返回了 reasoning_content，没有最终答案');
+    if (outcome.sawReasoning) details.push('只返回了 reasoning_content，没有最终答案');
     throw new Error(`端点返回 200，但流里没有任何文本（${details.join('，')}）`);
   }
-  return text;
+  return outcome.text;
 }

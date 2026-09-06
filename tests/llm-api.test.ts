@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { POST } from '../src/pages/api/llm.ts';
 import { assertReasoningWarnings } from '../src/server/llm/anthropic.ts';
+import { assertOpenAiWarnings } from '../src/server/llm/openai.ts';
 
 const originalFetch = globalThis.fetch;
 
@@ -128,6 +129,37 @@ test('Anthropic SDK warning policy rejects reasoning downgrades but ignores unre
   );
 });
 
+test('OpenAI-compatible SDK warning policy rejects request downgrades', () => {
+  assert.throws(
+    () =>
+      assertOpenAiWarnings(
+        [
+          {
+            type: 'compatibility',
+            feature: 'reasoning effort',
+            details: 'requested high was lowered to medium',
+          },
+        ],
+        'high',
+      ),
+    /未保持 OpenAI-compatible 请求契约.*lowered to medium/,
+  );
+  assert.throws(
+    () =>
+      assertOpenAiWarnings(
+        [{ type: 'unsupported', feature: 'maxOutputTokens', details: 'ignored' }],
+        'provider-default',
+      ),
+    /maxOutputTokens/,
+  );
+  assert.doesNotThrow(() =>
+    assertOpenAiWarnings(
+      [{ type: 'unsupported', feature: 'frequencyPenalty', details: 'ignored' }],
+      'high',
+    ),
+  );
+});
+
 /** 读完代理自己的 SSE，返回去掉空行后的原始事件列表 */
 async function readSse(response: Response): Promise<string[]> {
   assert.match(response.headers.get('content-type') ?? '', /text\/event-stream/);
@@ -176,7 +208,8 @@ test('relays an explicit OpenAI effort for generation and terminates with [DONE]
       'data: {"choices":[{"delta":{"content":"{\\"exercises\\":',
       '[]}"}}]}\n\n',
       'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
-      'data: [DONE]\n\n',
+      'data: [DO',
+      'NE]\r\n\r\n',
     ]);
   };
 
@@ -184,6 +217,7 @@ test('relays an explicit OpenAI effort for generation and terminates with [DONE]
   const events = await readSse(response);
 
   assert.equal(upstreamBody.stream, true); // 确实向上游要了流式
+  assert.equal(upstreamBody.stream_options, undefined);
   assert.equal(upstreamBody.reasoning_effort, 'medium');
   assert.equal(upstreamBody.reasoning, undefined); // Chat Completions 不用 Responses 的嵌套字段
   assert.equal(upstreamBody.max_tokens, 8_000); // 未知兼容模型保持原字段
@@ -196,8 +230,12 @@ test('relays an explicit OpenAI effort for generation and terminates with [DONE]
 });
 
 test('uses max_completion_tokens for a documented GPT-5 effort without raising the app limit', async () => {
+  let upstreamUrl = '';
+  let upstreamHeaders = new Headers();
   let upstreamBody: Record<string, unknown> = {};
-  globalThis.fetch = async (_url, init) => {
+  globalThis.fetch = async (url, init) => {
+    upstreamUrl = String(url);
+    upstreamHeaders = new Headers(init?.headers);
     upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
     return sseUp([
       'data: {"choices":[{"delta":{"content":"完成"}}]}\n\n',
@@ -207,12 +245,16 @@ test('uses max_completion_tokens for a documented GPT-5 effort without raising t
   };
 
   const response = await post('openai', {
+    baseUrl: 'https://llm.invalid/v1/chat/completions',
     stream: true,
     model: 'gpt-5-2025-08-07',
     reasoning: 'minimal',
   });
   await readSse(response);
 
+  assert.equal(upstreamUrl, 'https://llm.invalid/v1/chat/completions');
+  assert.equal(upstreamHeaders.get('authorization'), 'Bearer <REDACTED>');
+  assert.match(upstreamHeaders.get('user-agent') ?? '', /ai-sdk\/openai-compatible\/3\.0\.44/);
   assert.equal(upstreamBody.reasoning_effort, 'minimal');
   assert.equal(upstreamBody.reasoning, undefined);
   assert.equal(upstreamBody.max_completion_tokens, 8_000);
@@ -371,6 +413,29 @@ test('falls back to one-shot JSON once when the upstream ignores stream', async 
   assert.equal(calls, 1);
 
   assert.deepEqual(events, ['data: {"text":"完整结果"}', 'data: [DONE]']);
+});
+
+test('OpenAI-compatible SDK accumulates one stream for legacy non-stream clients', async () => {
+  let calls = 0;
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"choices":[{"delta":{"content":"整"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"段"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+  };
+
+  const response = await post('openai');
+  const body = (await response.json()) as { text?: string };
+
+  assert.equal(calls, 1);
+  assert.equal(upstreamBody.stream, true);
+  assert.match(response.headers.get('content-type') ?? '', /json/);
+  assert.equal(body.text, '整段');
 });
 
 test('surfaces an in-stream error event once and skips [DONE]', async () => {
@@ -726,6 +791,47 @@ test('reports a stream that ends without a terminator as incomplete', async () =
   assert.ok(!events.includes('data: [DONE]'));
 });
 
+test('OpenAI-compatible SDK requires [DONE] even after finish_reason=stop', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return sseUp([
+      'data: {"choices":[{"delta":{"content":"半截"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+    ]);
+  };
+
+  const events = await readSse(await post('openai', { stream: true }));
+
+  assert.equal(calls, 1);
+  assert.ok(events.some((event) => event.includes('提前断开')));
+  assert.ok(!events.includes('data: [DONE]'));
+});
+
+test('OpenAI-compatible JSON fallback requires a successful finish reason once', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({ choices: [{ message: { content: '缺少结束状态' } }] });
+  };
+
+  const missing = await readSse(await post('openai', { stream: true }));
+  assert.equal(calls, 1);
+  assert.ok(missing.some((event) => event.includes('缺少 finish_reason')));
+  assert.ok(!missing.includes('data: [DONE]'));
+
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({
+      choices: [{ message: { content: '截断内容' }, finish_reason: 'length' }],
+    });
+  };
+  const truncated = await readSse(await post('openai', { stream: true }));
+  assert.equal(calls, 2);
+  assert.ok(truncated.some((event) => event.includes('token 上限')));
+  assert.ok(!truncated.includes('data: [DONE]'));
+});
+
 /* ---------- 对话模式（body 带 messages，答疑用，见 docs/adr/0003） ---------- */
 
 function chatRequest(
@@ -977,7 +1083,7 @@ test('provider-default preserves the current GPT-5 request shape and generation 
     ]);
   };
 
-  await post('openai', { stream: true, model: 'gpt-5' });
+  await readSse(await post('openai', { stream: true, model: 'gpt-5' }));
 
   // 双模式分界锁死：不带 messages 的旧调用方（出题）仍走 JSON mode
   assert.deepEqual(upstreamBody.response_format, { type: 'json_object' });
@@ -1068,6 +1174,9 @@ test('HTTP cancellation while waiting for headers aborts once without retrying',
 
   const controller = new AbortController();
   const response = await postChat('openai', {}, controller.signal);
+  for (let attempt = 0; attempt < 20 && upstreamSignals.length === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   controller.abort(new DOMException('learner stopped', 'AbortError'));
 
   assert.equal(await response.text(), '');
@@ -1149,12 +1258,17 @@ test('reasoning-only streams keep the downstream alive, then clean timers and li
     'data: {"choices":[{"delta":{"reasoning_content":"still thinking"}}]}\n\n',
   ]);
   const upstreamSignals: AbortSignal[] = [];
+  let fetchCalls = 0;
   globalThis.fetch = async (_url, init) => {
+    fetchCalls += 1;
     if (init?.signal) upstreamSignals.push(init.signal);
     return upstream.response;
   };
   const requestController = new AbortController();
   const response = await postChat('openai', {}, requestController.signal);
+  for (let attempt = 0; attempt < 20 && fetchCalls === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   assert.ok(response.body);
   const reader = response.body.getReader();
 
@@ -1163,6 +1277,7 @@ test('reasoning-only streams keep the downstream alive, then clean timers and li
   assert.equal(new TextDecoder().decode(keepalive.value), ': keepalive\n\n');
 
   upstream.send('data: {"choices":[{"delta":{"content":"答"}}]}\n\n');
+  upstream.send('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
   upstream.send('data: [DONE]\n\n');
   const rest: string[] = [];
   for (;;) {
@@ -1273,6 +1388,9 @@ test('the 180-second timeout only covers waiting for upstream headers', async (t
     });
 
   const response = await postChat('openai');
+  for (let attempt = 0; attempt < 20 && fetchCalls === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   t.mock.timers.tick(180_000);
   const events = await readSse(response);
 
