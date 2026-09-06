@@ -24,10 +24,10 @@ import { z } from 'zod';
 import {
   DEFAULT_REASONING,
   REASONING_LEVELS,
-  anthropicRequestConfig,
   knownReasoningCapability,
   reasoningConfigurationError,
 } from '../../shared/llmConfig';
+import { runAnthropicUpstream } from '../../server/llm/anthropic';
 
 export const prerender = false;
 
@@ -283,34 +283,10 @@ function elapsed(startedAt: number): string {
 }
 
 function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: RequestInit } {
+  if (cfg.type === 'anthropic') throw new Error('Anthropic requests must use the AI SDK upstream');
   const streamField = stream ? { stream: true } : {};
   // 对话模式（答疑多轮）：user 一次性提示词换成完整对话历史；不设 response_format
   const chat = cfg.messages ?? null;
-  if (cfg.type === 'anthropic') {
-    const reasoning = anthropicRequestConfig(cfg.model, cfg.reasoning);
-    return {
-      url: joinUrl(cfg.baseUrl, '/v1/messages'),
-      init: {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': cfg.apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: cfg.model,
-          max_tokens: reasoning.maxTokens,
-          ...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
-          ...(reasoning.outputConfig ? { output_config: reasoning.outputConfig } : {}),
-          ...streamField,
-          system: cfg.system,
-          messages: chat
-            ? chat.map((m) => ({ role: m.role, content: m.content }))
-            : [{ role: 'user', content: cfg.user ?? '' }],
-        }),
-      },
-    };
-  }
   if (cfg.type === 'codex') {
     // ChatGPT Codex 后端的硬性契约：instructions 必须是顶层字符串、store 必须
     // false、只收流式；temperature / max_output_tokens 会被直接拒（订阅侧自己
@@ -404,6 +380,9 @@ async function runUpstream(
 ): Promise<string> {
   signal.throwIfAborted();
   const startedAt = Date.now();
+  if (cfg.type === 'anthropic') {
+    return runAnthropicUpstream(cfg, onDelta, signal);
+  }
   const { url, init } = upstreamRequest(cfg, stream);
   const { response: res, release } = await fetchEndpoint(url, init, signal);
   try {
@@ -411,11 +390,9 @@ async function runUpstream(
     if (res.ok && (res.headers.get('content-type') ?? '').includes('text/event-stream')) {
       return await relaySse(res, cfg.type, onDelta, startedAt, signal);
     }
-    return cfg.type === 'anthropic'
-      ? await parseAnthropicJson(res, startedAt, signal)
-      : cfg.type === 'codex'
-        ? await parseResponsesJson(res, startedAt, signal)
-        : await parseOpenAiJson(res, startedAt, signal);
+    return cfg.type === 'codex'
+      ? await parseResponsesJson(res, startedAt, signal)
+      : await parseOpenAiJson(res, startedAt, signal);
   } finally {
     if (signal.aborted && res.body && !res.body.locked) {
       try {
@@ -524,7 +501,7 @@ function responsesText(resp: JsonObject | null): string {
 /** 解析上游 SSE，边转发边攒全文；流里的错误、截断、提前断开都抛 Error */
 async function relaySse(
   res: Response,
-  type: 'anthropic' | 'openai' | 'codex',
+  type: 'openai' | 'codex',
   onDelta: (delta: string) => void,
   startedAt: number,
   signal: AbortSignal,
@@ -615,48 +592,6 @@ async function relaySse(
       }
       continue; // response.created / output_item.* / content_part.* 等过程事件
     }
-
-    // anthropic
-    const kind = typeof obj.type === 'string' ? obj.type : '';
-    if (kind === 'error') {
-      throw new Error(`端点在流里报错：${errorDetail(obj) || '未知错误'}`);
-    }
-    if (kind === 'message_stop') {
-      completed = true;
-      break;
-    }
-    if (kind === 'message_delta') {
-      const delta = asObject(obj.delta);
-      const stop = typeof delta?.stop_reason === 'string' ? delta.stop_reason : '';
-      if (stop) {
-        finishNote = `stop_reason=${stop}`;
-        if (stop === 'max_tokens') {
-          throw new Error('输出被 max_tokens 截断（stop_reason=max_tokens），JSON 不完整');
-        }
-      }
-      continue;
-    }
-    if (kind === 'content_block_start') {
-      const block = asObject(obj.content_block);
-      if (block?.type === 'thinking' || block?.type === 'redacted_thinking') {
-        sawReasoning = true;
-      }
-      if (typeof block?.text === 'string' && block.text) {
-        text += block.text;
-        onDelta(block.text);
-      }
-      continue;
-    }
-    if (kind === 'content_block_delta') {
-      const delta = asObject(obj.delta);
-      if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
-        text += delta.text;
-        onDelta(delta.text);
-      } else if (delta?.type === 'thinking_delta') {
-        sawReasoning = true;
-      }
-      continue;
-    }
   }
 
   if (!completed) throw new Error(`上游提前断开，响应不完整（${elapsed(startedAt)}）`);
@@ -671,32 +606,6 @@ async function relaySse(
 }
 
 /* ---------- 上游完整 JSON 响应（不支持流式的中转 / 直接报错） ---------- */
-
-async function parseAnthropicJson(
-  res: Response,
-  startedAt: number,
-  signal: AbortSignal,
-): Promise<string> {
-  const data = await readJson(res, signal);
-  const content = Array.isArray(data.content) ? data.content : [];
-  const failure = endpointError(res, data, content.length > 0);
-  if (failure) throw failure;
-
-  const text = content
-    .map(asObject)
-    .filter((block): block is JsonObject => block?.type === 'text')
-    .map((block) => (typeof block.text === 'string' ? block.text : ''))
-    .join('');
-
-  if (!text.trim()) {
-    const stopReason =
-      typeof data.stop_reason === 'string' ? `，stop_reason=${data.stop_reason}` : '';
-    throw new Error(
-      `端点返回 ${res.status}，但 content 中没有文本（${elapsed(startedAt)}${stopReason}）`,
-    );
-  }
-  return text;
-}
 
 async function parseOpenAiJson(
   res: Response,

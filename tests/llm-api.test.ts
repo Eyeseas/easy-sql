@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { POST } from '../src/pages/api/llm.ts';
+import { assertReasoningWarnings } from '../src/server/llm/anthropic.ts';
 
 const originalFetch = globalThis.fetch;
 
@@ -52,6 +53,80 @@ function sseUp(chunks: string[]): Response {
   });
   return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
+
+function anthropicEvent(event: Record<string, unknown>): string {
+  return `event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function anthropicStart(model = 'claude-haiku-4-5'): Record<string, unknown> {
+  return {
+    type: 'message_start',
+    message: {
+      id: 'msg_test',
+      type: 'message',
+      role: 'assistant',
+      content: [],
+      model,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 0 },
+    },
+  };
+}
+
+function anthropicTextSse(
+  chunks: readonly string[],
+  stopReason = 'end_turn',
+  model = 'claude-haiku-4-5',
+): Response {
+  return sseUp(
+    [
+      anthropicStart(model),
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      ...chunks.map((text) => ({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text },
+      })),
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { output_tokens: 1 },
+      },
+      { type: 'message_stop' },
+    ].map(anthropicEvent),
+  );
+}
+
+test('Anthropic SDK warning policy rejects reasoning downgrades but ignores unrelated warnings', () => {
+  assert.throws(
+    () =>
+      assertReasoningWarnings(
+        [
+          {
+            type: 'compatibility',
+            feature: 'reasoning',
+            details: 'requested xhigh was lowered to high',
+          },
+        ],
+        'xhigh',
+      ),
+    /未按所选思考等级执行.*lowered to high/,
+  );
+  assert.doesNotThrow(() =>
+    assertReasoningWarnings(
+      [{ type: 'unsupported', feature: 'frequencyPenalty', details: 'ignored' }],
+      'high',
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertReasoningWarnings(
+      [{ type: 'compatibility', feature: 'reasoning', details: 'ignored' }],
+      'provider-default',
+    ),
+  );
+});
 
 /** 读完代理自己的 SSE，返回去掉空行后的原始事件列表 */
 async function readSse(response: Response): Promise<string[]> {
@@ -144,21 +219,27 @@ test('uses max_completion_tokens for a documented GPT-5 effort without raising t
   assert.equal(upstreamBody.max_tokens, undefined);
 });
 
-test('relays an Anthropic SSE stream until message_stop without default reasoning fields', async () => {
+test('relays an Anthropic SDK stream until message_stop without default reasoning fields', async () => {
+  let upstreamUrl = '';
+  let upstreamHeaders = new Headers();
   let upstreamBody: Record<string, unknown> = {};
-  globalThis.fetch = async (_url, init) => {
+  globalThis.fetch = async (url, init) => {
+    upstreamUrl = String(url);
+    upstreamHeaders = new Headers(init?.headers);
     upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return sseUp([
-      'data: {"type":"message_start"}\n\n',
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}\n\n',
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"，世界"}}\n\n',
-      'data: {"type":"message_stop"}\n\n',
-    ]);
+    return anthropicTextSse(['你好', '，世界']);
   };
 
-  const response = await post('anthropic', { stream: true });
+  const response = await post('anthropic', {
+    baseUrl: 'https://llm.invalid/v1/messages',
+    stream: true,
+  });
   const events = await readSse(response);
 
+  assert.equal(upstreamUrl, 'https://llm.invalid/v1/messages');
+  assert.equal(upstreamHeaders.get('x-api-key'), '<REDACTED>');
+  assert.equal(upstreamHeaders.get('anthropic-version'), '2023-06-01');
+  assert.equal(upstreamBody.stream, true);
   assert.equal(upstreamBody.max_tokens, 16_000);
   assert.equal(upstreamBody.thinking, undefined);
   assert.equal(upstreamBody.output_config, undefined);
@@ -171,16 +252,40 @@ test('anthropic adaptive: sends native thinking and effort fields and filters th
   globalThis.fetch = async (_url, init) => {
     calls += 1;
     upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return sseUp([
-      'data: {"type":"message_start"}\n\n',
-      'data: {"type":"content_block_start","content_block":{"type":"thinking","thinking":""}}\n\n',
-      'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"internal"}}\n\n',
-      'data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"sig"}}\n\n',
-      'data: {"type":"content_block_stop"}\n\n',
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"最终答案"}}\n\n',
-      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
-      'data: {"type":"message_stop"}\n\n',
-    ]);
+    return sseUp(
+      [
+        anthropicStart('claude-opus-5'),
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: '' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: 'internal' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'signature_delta', signature: 'sig' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+        {
+          type: 'content_block_delta',
+          index: 1,
+          delta: { type: 'text_delta', text: '最终答案' },
+        },
+        { type: 'content_block_stop', index: 1 },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          usage: { output_tokens: 2 },
+        },
+        { type: 'message_stop' },
+      ].map(anthropicEvent),
+    );
   };
 
   const response = await post('anthropic', {
@@ -202,10 +307,7 @@ test('anthropic budget: maps low, medium, and high to fixed budgets below total 
   const upstreamBodies: Record<string, unknown>[] = [];
   globalThis.fetch = async (_url, init) => {
     upstreamBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-    return sseUp([
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"完成"}}\n\n',
-      'data: {"type":"message_stop"}\n\n',
-    ]);
+    return anthropicTextSse(['完成']);
   };
 
   for (const reasoning of ['low', 'medium', 'high'] as const) {
@@ -239,10 +341,7 @@ test('anthropic disabled: sends only thinking.type=disabled for a verified model
   let upstreamBody: Record<string, unknown> = {};
   globalThis.fetch = async (_url, init) => {
     upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return sseUp([
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"直接回答"}}\n\n',
-      'data: {"type":"message_stop"}\n\n',
-    ]);
+    return anthropicTextSse(['直接回答'], 'end_turn', 'claude-sonnet-4-6');
   };
 
   await readSse(
@@ -329,11 +428,23 @@ test('reports upstream truncation at the configured token limit in stream mode',
 
 test('anthropic thinking-only and max_tokens streams fail without a successful terminator', async () => {
   globalThis.fetch = async () =>
-    sseUp([
-      'data: {"type":"content_block_start","content_block":{"type":"thinking","thinking":"","signature":"sig"}}\n\n',
-      'data: {"type":"content_block_stop"}\n\n',
-      'data: {"type":"message_stop"}\n\n',
-    ]);
+    sseUp(
+      [
+        anthropicStart('claude-opus-5'),
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: '' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          usage: { output_tokens: 1 },
+        },
+        { type: 'message_stop' },
+      ].map(anthropicEvent),
+    );
 
   const thinkingOnly = await readSse(
     await post('anthropic', {
@@ -346,12 +457,7 @@ test('anthropic thinking-only and max_tokens streams fail without a successful t
   assert.ok(thinkingOnly.some((event) => event.includes('reasoning_content')));
   assert.ok(!thinkingOnly.includes('data: [DONE]'));
 
-  globalThis.fetch = async () =>
-    sseUp([
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"半截"}}\n\n',
-      'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}\n\n',
-      'data: {"type":"message_stop"}\n\n',
-    ]);
+  globalThis.fetch = async () => anthropicTextSse(['半截'], 'max_tokens');
 
   const truncated = await readSse(
     await post('anthropic', {
@@ -386,6 +492,89 @@ test('anthropic complete JSON fallback filters thinking and does not retry', asy
 
   assert.equal(calls, 1);
   assert.deepEqual(events, ['data: {"text":"完整答案"}', 'data: [DONE]']);
+});
+
+test('Anthropic SDK accumulates its stream for legacy non-stream clients', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return anthropicTextSse(['整', '段']);
+  };
+
+  const response = await post('anthropic');
+  const body = (await response.json()) as { text?: string };
+
+  assert.equal(calls, 1);
+  assert.match(response.headers.get('content-type') ?? '', /json/);
+  assert.equal(body.text, '整段');
+});
+
+test('Anthropic SDK rejects an in-stream error once and redacts the key', async () => {
+  const apiKey = 'anthropic-secret-that-must-not-leak';
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return sseUp(
+      [
+        anthropicStart(),
+        {
+          type: 'error',
+          error: { type: 'overloaded_error', message: `upstream rejected ${apiKey}` },
+        },
+      ].map(anthropicEvent),
+    );
+  };
+
+  const events = await readSse(await post('anthropic', { apiKey, stream: true }));
+
+  assert.equal(calls, 1);
+  assert.ok(events.some((event) => event.includes('<REDACTED>')));
+  assert.ok(events.every((event) => !event.includes(apiKey)));
+  assert.ok(!events.includes('data: [DONE]'));
+});
+
+test('Anthropic SDK rejects a stream that has a stop reason but no message_stop', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return sseUp(
+      [
+        anthropicStart(),
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: '半截' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          usage: { output_tokens: 1 },
+        },
+      ].map(anthropicEvent),
+    );
+  };
+
+  const events = await readSse(await post('anthropic', { stream: true }));
+
+  assert.equal(calls, 1);
+  assert.ok(events.some((event) => event.includes('提前断开')));
+  assert.ok(!events.includes('data: [DONE]'));
+});
+
+test('Anthropic JSON compatibility requires a final stop reason without retrying', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({ content: [{ type: 'text', text: '没有终止标志' }] });
+  };
+
+  const events = await readSse(await post('anthropic', { stream: true }));
+
+  assert.equal(calls, 1);
+  assert.ok(events.some((event) => event.includes('缺少 stop_reason')));
+  assert.ok(!events.includes('data: [DONE]'));
 });
 
 /* ---------- codex（OpenAI Responses API） ---------- */
@@ -606,29 +795,29 @@ test('chat mode: relays the full conversation to OpenAI-compatible endpoints wit
   assert.deepEqual(events, ['data: {"text":"思"}', 'data: {"text":"路是"}', 'data: [DONE]']);
 });
 
-test('chat mode: anthropic gets system plus the conversation history', async () => {
+test('chat mode: Anthropic SDK gets system plus the conversation history', async () => {
   let upstreamBody: Record<string, unknown> = {};
   globalThis.fetch = async (_url, init) => {
     upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return sseUp([
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"好"}}\n\n',
-      'data: {"type":"message_stop"}\n\n',
-    ]);
+    return anthropicTextSse(['好']);
   };
 
-  await postChat('anthropic', {
-    model: 'claude-haiku-4-5',
-    reasoning: 'medium',
-  });
+  const events = await readSse(
+    await postChat('anthropic', {
+      model: 'claude-haiku-4-5',
+      reasoning: 'medium',
+    }),
+  );
 
-  assert.equal(upstreamBody.system, 'system');
+  assert.deepEqual(upstreamBody.system, [{ type: 'text', text: 'system' }]);
   assert.deepEqual(upstreamBody.thinking, { type: 'enabled', budget_tokens: 4_096 });
   assert.equal(upstreamBody.output_config, undefined);
   assert.deepEqual(upstreamBody.messages, [
-    { role: 'user', content: '第一问' },
-    { role: 'assistant', content: '第一答' },
-    { role: 'user', content: '追问' },
+    { role: 'user', content: [{ type: 'text', text: '第一问' }] },
+    { role: 'assistant', content: [{ type: 'text', text: '第一答' }] },
+    { role: 'user', content: [{ type: 'text', text: '追问' }] },
   ]);
+  assert.deepEqual(events, ['data: {"text":"好"}', 'data: [DONE]']);
 });
 
 test('chat mode: codex gets instructions plus input_text/output_text history', async () => {
@@ -816,6 +1005,7 @@ test('rejects a body with neither user nor messages', async () => {
 function controlledSse(initialChunks: readonly string[] = []): {
   response: Response;
   send: (chunk: string) => void;
+  close: () => void;
   cancelCount: () => number;
 } {
   const encoder = new TextEncoder();
@@ -838,6 +1028,10 @@ function controlledSse(initialChunks: readonly string[] = []): {
     send(chunk) {
       assert.ok(streamController);
       streamController.enqueue(encoder.encode(chunk));
+    },
+    close() {
+      assert.ok(streamController);
+      streamController.close();
     },
     cancelCount: () => canceled,
   };
@@ -881,11 +1075,46 @@ test('HTTP cancellation while waiting for headers aborts once without retrying',
   assert.equal(upstreamSignals[0]?.aborted, true);
 });
 
+test('Anthropic SDK cancellation while waiting for headers aborts its only fetch', async () => {
+  const upstreamSignals: AbortSignal[] = [];
+  let fetchCalls = 0;
+  globalThis.fetch = async (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      fetchCalls += 1;
+      const signal = init?.signal;
+      if (!signal) throw new Error('上游 fetch 缺少 signal');
+      upstreamSignals.push(signal);
+      const rejectAbort = () => reject(signal.reason);
+      if (signal.aborted) rejectAbort();
+      else signal.addEventListener('abort', rejectAbort, { once: true });
+    });
+
+  const controller = new AbortController();
+  const response = await postChat('anthropic', {}, controller.signal);
+  for (let attempt = 0; attempt < 20 && fetchCalls === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  controller.abort(new DOMException('learner stopped', 'AbortError'));
+
+  assert.equal(await response.text(), '');
+  assert.equal(fetchCalls, 1);
+  assert.equal(upstreamSignals[0]?.aborted, true);
+});
+
 test('downstream stream cancellation aborts fetch and releases each protocol response body', async () => {
   const deltas = {
     openai: 'data: {"choices":[{"delta":{"content":"片段"}}]}\n\n',
-    anthropic:
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"片段"}}\n\n',
+    anthropic: [
+      anthropicStart(),
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '片段' },
+      },
+    ]
+      .map(anthropicEvent)
+      .join(''),
     codex: 'data: {"type":"response.output_text.delta","delta":"片段"}\n\n',
   } as const;
 
@@ -951,6 +1180,85 @@ test('reasoning-only streams keep the downstream alive, then clean timers and li
   assert.equal(upstreamSignals.at(-1)?.aborted, false);
 });
 
+test('Anthropic reasoning-only events keep the downstream alive without exposing reasoning', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const upstream = controlledSse([
+    [
+      anthropicStart('claude-opus-5'),
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking', thinking: '' },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'private reasoning' },
+      },
+    ]
+      .map(anthropicEvent)
+      .join(''),
+  ]);
+  const upstreamSignals: AbortSignal[] = [];
+  globalThis.fetch = async (_url, init) => {
+    if (init?.signal) upstreamSignals.push(init.signal);
+    return upstream.response;
+  };
+  const requestController = new AbortController();
+  const response = await postChat(
+    'anthropic',
+    { model: 'claude-opus-5', reasoning: 'high' },
+    requestController.signal,
+  );
+  assert.ok(response.body);
+  const reader = response.body.getReader();
+
+  t.mock.timers.tick(15_000);
+  const keepalive = await reader.read();
+  assert.equal(new TextDecoder().decode(keepalive.value), ': keepalive\n\n');
+
+  upstream.send(anthropicEvent({ type: 'content_block_stop', index: 0 }));
+  upstream.send(
+    anthropicEvent({
+      type: 'content_block_start',
+      index: 1,
+      content_block: { type: 'text', text: '' },
+    }),
+  );
+  upstream.send(
+    anthropicEvent({
+      type: 'content_block_delta',
+      index: 1,
+      delta: { type: 'text_delta', text: '最终回答' },
+    }),
+  );
+  upstream.send(anthropicEvent({ type: 'content_block_stop', index: 1 }));
+  upstream.send(
+    anthropicEvent({
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 2 },
+    }),
+  );
+  upstream.send(anthropicEvent({ type: 'message_stop' }));
+  upstream.close();
+
+  const rest: string[] = [];
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    rest.push(new TextDecoder().decode(chunk.value));
+  }
+  assert.match(rest.join(''), /data: \{"text":"最终回答"\}/);
+  assert.match(rest.join(''), /data: \[DONE\]/);
+  assert.doesNotMatch(rest.join(''), /private reasoning/);
+  assert.equal(upstream.response.body?.locked, false);
+
+  requestController.abort(new DOMException('late abort', 'AbortError'));
+  t.mock.timers.tick(180_000);
+  assert.equal(upstreamSignals.at(-1)?.aborted, false);
+});
+
 test('the 180-second timeout only covers waiting for upstream headers', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const upstreamSignals: AbortSignal[] = [];
@@ -965,6 +1273,32 @@ test('the 180-second timeout only covers waiting for upstream headers', async (t
     });
 
   const response = await postChat('openai');
+  t.mock.timers.tick(180_000);
+  const events = await readSse(response);
+
+  assert.equal(fetchCalls, 1);
+  assert.equal(upstreamSignals.at(-1)?.aborted, true);
+  assert.ok(events.some((event) => event.includes('端点请求超过 180 秒，已取消')));
+  assert.ok(!events.includes('data: [DONE]'));
+});
+
+test('Anthropic SDK keeps the 180-second limit scoped to waiting for headers', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const upstreamSignals: AbortSignal[] = [];
+  let fetchCalls = 0;
+  globalThis.fetch = async (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      fetchCalls += 1;
+      const signal = init?.signal;
+      if (!signal) throw new Error('上游 fetch 缺少 signal');
+      upstreamSignals.push(signal);
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+
+  const response = await postChat('anthropic');
+  for (let attempt = 0; attempt < 20 && fetchCalls === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   t.mock.timers.tick(180_000);
   const events = await readSse(response);
 

@@ -6,6 +6,10 @@ let upstream: Server;
 let upstreamBaseUrl = '';
 const requestBodies: Record<string, unknown>[] = [];
 
+function anthropicEvent(event: Record<string, unknown>): string {
+  return `event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
 test.setTimeout(60_000);
 
 test.beforeAll(async () => {
@@ -36,10 +40,40 @@ test.beforeAll(async () => {
       connection: 'keep-alive',
     });
     response.end(
-      `data: ${JSON.stringify({
-        type: 'content_block_delta',
-        delta: { type: 'text_delta', text },
-      })}\n\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\ndata: {"type":"message_stop"}\n\n`,
+      [
+        {
+          type: 'message_start',
+          message: {
+            id: `msg_browser_${requestBodies.length}`,
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            model: typeof body.model === 'string' ? body.model : 'test-model',
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 0 },
+          },
+        },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: '' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text },
+        },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          usage: { output_tokens: 1 },
+        },
+        { type: 'message_stop' },
+      ]
+        .map(anthropicEvent)
+        .join(''),
     );
   });
 
