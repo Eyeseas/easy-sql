@@ -125,6 +125,7 @@
 .qa-msg.is-user p {
   margin: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .qa-msg.is-assistant {
@@ -171,6 +172,7 @@
   color: var(--danger);
   font-size: 0.8rem;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .qa-error-hint {
@@ -213,6 +215,9 @@
 }
 
 .qa-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 0 0 10px;
   font-size: 0.8rem;

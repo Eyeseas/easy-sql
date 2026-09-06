@@ -19,6 +19,8 @@ const REASONING_LABELS: Record<ReasoningLevel, string> = {
   xhigh: '超高',
 };
 
+let settingsOpener: HTMLElement | null = null;
+
 function dialog(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[data-llm-dialog]');
 }
@@ -93,6 +95,12 @@ export function openLlmSettings(msg?: string): void {
   const dlg = dialog();
   if (!dlg) return;
 
+  const wasHidden = dlg.hidden;
+  const active = document.activeElement;
+  if (wasHidden && active instanceof HTMLElement && !dlg.contains(active)) {
+    settingsOpener = active;
+  }
+
   const cfg = loadConfig();
   const set = (name: string, value: string) => {
     const control = field(dlg, name);
@@ -110,11 +118,25 @@ export function openLlmSettings(msg?: string): void {
     !cfg.apiKey,
   );
   dlg.hidden = false;
+  if (wasHidden) {
+    queueMicrotask(() => field(dlg, 'type')?.focus());
+  }
 }
 
 function close(): void {
   const dlg = dialog();
-  if (dlg) dlg.hidden = true;
+  if (!dlg) return;
+  dlg.hidden = true;
+  settingsOpener?.focus();
+  settingsOpener = null;
+}
+
+function focusableControls(dlg: HTMLElement): HTMLElement[] {
+  return [
+    ...dlg.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ].filter((control) => !control.hidden);
 }
 
 export function initLlmSettings(): void {
@@ -127,6 +149,27 @@ export function initLlmSettings(): void {
 
   dlg.addEventListener('click', (e) => {
     if (e.target === dlg) close();
+  });
+
+  dlg.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+
+    const controls = focusableControls(dlg);
+    const first = controls.at(0);
+    const last = controls.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
 
   dlg.querySelector('[data-action="llm-close"]')?.addEventListener('click', close);

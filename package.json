@@ -14,6 +14,7 @@
     "deploy": "astro build && wrangler deploy",
     "test": "tsx --test tests/*.test.ts",
     "test:browser": "playwright test",
+    "test:acceptance": "pnpm build && playwright test --config playwright.production.config.ts",
     "typecheck": "astro check",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
