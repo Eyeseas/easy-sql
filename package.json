@@ -10,6 +10,7 @@
     "preview": "wrangler dev",
     "deploy": "astro build && wrangler deploy",
     "test": "node --test tests/*.test.ts",
+    "test:browser": "playwright test",
     "typecheck": "astro check",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.0",
     "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.3.0",
     "@types/prismjs": "^1.26.6",
     "@types/react": "^19.2.18",

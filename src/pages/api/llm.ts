@@ -10,10 +10,10 @@
  *
  * body 带 stream: true 时走 SSE 流式转发（见 docs/adr/0002）：Cloudflare 边缘对
  * 「迟迟不吐字节」的响应只等约 100 秒，非流式代理慢模型（推理模型动辄一两分钟）
- * 会被掐断、浏览器看到 524；流式只要开始有字节流动就不受此限，等上游首字节期间
- * 每 15 秒发一行 SSE 注释保活。不带 stream 时保持旧行为：攒完整响应再返回 JSON
- * （兼容部署切换期浏览器里缓存的旧产物）。上游不支持流式（返回完整 JSON）时自动
- * 降级：整段当作单个增量转发。
+ * 会被掐断、浏览器看到 524；代理每 15 秒向浏览器这一侧发一行 SSE 注释保活，
+ * 上游等待 headers 仍有独立的 180 秒期限，保活不代表上游连接永不超时。不带
+ * stream 时保持旧行为：攒完整响应再返回 JSON（兼容部署切换期浏览器里缓存的旧
+ * 产物）。上游不支持流式（返回完整 JSON）时自动降级：整段当作单个增量转发。
  *
  * key 仍然只存在用户自己的 localStorage（或自部署时的构建产物）里，服务端只透传
  * 不落盘。注意：站点公开部署时，这个端点任何人都能借用你的 Worker 转发请求
@@ -57,9 +57,9 @@ export const POST: APIRoute = async ({ request }) => {
   if (!cfg.messages && cfg.user === undefined) {
     return Response.json({ error: '请求参数不对' }, { status: 400 });
   }
-  if (cfg.stream) return relayAsStream(cfg);
+  if (cfg.stream) return relayAsStream(cfg, request.signal);
   try {
-    return Response.json({ text: await runUpstream(cfg, false, () => {}) });
+    return Response.json({ text: await runUpstream(cfg, false, () => {}, request.signal) });
   } catch (e) {
     return Response.json({ error: errorMessage(e) }, { status: 502 });
   }
@@ -69,43 +69,80 @@ export const POST: APIRoute = async ({ request }) => {
 
 const KEEPALIVE_MS = 15_000;
 
-function relayAsStream(cfg: Body): Response {
+function relayAsStream(cfg: Body, requestSignal: AbortSignal): Response {
   const encoder = new TextEncoder();
+  const upstream = new AbortController();
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  let listeningForRequestAbort = false;
+
+  const abortUpstream = (reason?: unknown): void => {
+    if (!upstream.signal.aborted) upstream.abort(reason);
+  };
+  const stopKeepalive = (): void => {
+    if (keepalive === undefined) return;
+    clearInterval(keepalive);
+    keepalive = undefined;
+  };
+  const onRequestAbort = (): void => {
+    stopKeepalive();
+    abortUpstream(requestSignal.reason);
+  };
+  const cleanup = (): void => {
+    stopKeepalive();
+    if (listeningForRequestAbort) {
+      requestSignal.removeEventListener('abort', onRequestAbort);
+      listeningForRequestAbort = false;
+    }
+  };
+
   return new Response(
     new ReadableStream<Uint8Array>({
       start(controller) {
-        // 客户端断开后 enqueue/close 都会抛错，统一在局部吞掉；
-        // onDelta 里的写入失败会顺着 runUpstream 取消上游读取
+        requestSignal.addEventListener('abort', onRequestAbort, { once: true });
+        listeningForRequestAbort = true;
+        if (requestSignal.aborted) onRequestAbort();
+
         const write = (chunk: string): void => {
           controller.enqueue(encoder.encode(chunk));
         };
-        // 上游首字节可能要等很久，SSE 注释行保活，避免边缘当成死连接掐掉
-        const keepalive = setInterval(() => {
-          try {
-            write(': keepalive\n\n');
-          } catch {
-            /* 浏览器已断开 */
-          }
-        }, KEEPALIVE_MS);
+        // 长思考可能一直只有推理事件、没有最终文本；这段时间也持续保活下游连接
+        if (!upstream.signal.aborted) {
+          keepalive = setInterval(() => {
+            try {
+              write(': keepalive\n\n');
+            } catch {
+              /* 浏览器已断开，cancel 会负责清理和取消上游 */
+            }
+          }, KEEPALIVE_MS);
+        }
         void (async () => {
           try {
             let sent = '';
-            const text = await runUpstream(cfg, true, (delta) => {
-              sent += delta;
-              write(`data: ${JSON.stringify({ text: delta })}\n\n`);
-            });
+            const text = await runUpstream(
+              cfg,
+              true,
+              (delta) => {
+                sent += delta;
+                write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+              },
+              upstream.signal,
+            );
             if (!text.trim()) throw new Error('端点没有返回内容，重试一次通常就好');
             // 不支持流式的上游走的是完整 JSON 解析，没经过 onDelta：整段补发
             if (text !== sent) write(`data: ${JSON.stringify({ text })}\n\n`);
             write('data: [DONE]\n\n');
           } catch (e) {
-            try {
-              write(`data: ${JSON.stringify({ error: errorMessage(e) })}\n\n`);
-            } catch {
-              /* 浏览器已断开 */
+            const canceled = upstream.signal.aborted;
+            abortUpstream(e);
+            if (!canceled) {
+              try {
+                write(`data: ${JSON.stringify({ error: errorMessage(e) })}\n\n`);
+              } catch {
+                /* 浏览器已断开 */
+              }
             }
           } finally {
-            clearInterval(keepalive);
+            cleanup();
             try {
               controller.close();
             } catch {
@@ -113,6 +150,10 @@ function relayAsStream(cfg: Body): Response {
             }
           }
         })();
+      },
+      cancel(reason) {
+        cleanup();
+        abortUpstream(reason);
       },
     }),
     {
@@ -156,11 +197,19 @@ function errorDetail(data: JsonObject): string {
   return typeof data.message === 'string' ? data.message : '';
 }
 
-async function readJson(res: Response): Promise<JsonObject> {
+async function readJson(res: Response, signal: AbortSignal): Promise<JsonObject> {
   try {
-    const data = asObject(await res.json());
+    if (!res.body) throw new Error('missing response body');
+    const decoder = new TextDecoder();
+    let text = '';
+    for await (const chunk of bodyChunks(res.body, signal)) {
+      text += decoder.decode(chunk, { stream: true });
+    }
+    text += decoder.decode();
+    const data = asObject(JSON.parse(text));
     if (data) return data;
   } catch {
+    signal.throwIfAborted();
     /* 统一在下面给出带状态码的错误 */
   }
   throw new Error(`端点返回 ${res.status}，但响应不是 JSON 对象`);
@@ -172,16 +221,41 @@ function endpointError(res: Response, data: JsonObject, hasExpectedPayload: bool
   return new Error(`端点返回 ${res.status}${detail ? `：${detail}` : ''}`);
 }
 
-async function fetchEndpoint(url: string, init: RequestInit): Promise<Response> {
+interface EndpointResponse {
+  response: Response;
+  release: () => void;
+}
+
+async function fetchEndpoint(
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal,
+): Promise<EndpointResponse> {
   // 手写超时而不是 AbortSignal.timeout：workerd 上它有过不可捕获 DOMException 的
-  // 边缘 bug（cloudflare/workerd#1020），手写版两个运行时都稳，还能 clearTimeout。
-  // fetch 返回即 headers 到手、计时随之结束，所以这个超时只管「等上游首包」
+  // 边缘 bug（cloudflare/workerd#1020）。fetch 返回即 headers 到手，计时随之结束；
+  // 外部取消监听会保留到响应体读完，确保 headers 后取消也能中止底层 fetch。
+  signal.throwIfAborted();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  let timedOut = false;
+  let released = false;
+  const onAbort = (): void => controller.abort(signal.reason);
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    signal.removeEventListener('abort', onAbort);
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, UPSTREAM_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    return { response, release };
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
+    release();
+    signal.throwIfAborted();
+    if (timedOut && controller.signal.aborted) {
       throw new Error(`端点请求超过 ${UPSTREAM_TIMEOUT_MS / 1000} 秒，已取消`);
     }
     throw error;
@@ -295,25 +369,78 @@ async function runUpstream(
   cfg: Body,
   stream: boolean,
   onDelta: (delta: string) => void,
+  signal: AbortSignal,
 ): Promise<string> {
+  signal.throwIfAborted();
   const startedAt = Date.now();
   const { url, init } = upstreamRequest(cfg, stream);
-  const res = await fetchEndpoint(url, init);
-  if (res.ok && (res.headers.get('content-type') ?? '').includes('text/event-stream')) {
-    return relaySse(res, cfg.type, onDelta, startedAt);
+  const { response: res, release } = await fetchEndpoint(url, init, signal);
+  try {
+    signal.throwIfAborted();
+    if (res.ok && (res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+      return await relaySse(res, cfg.type, onDelta, startedAt, signal);
+    }
+    return cfg.type === 'anthropic'
+      ? await parseAnthropicJson(res, startedAt, signal)
+      : cfg.type === 'codex'
+        ? await parseResponsesJson(res, startedAt, signal)
+        : await parseOpenAiJson(res, startedAt, signal);
+  } finally {
+    if (signal.aborted && res.body && !res.body.locked) {
+      try {
+        await res.body.cancel(signal.reason);
+      } catch {
+        /* fetch 或 reader 已经释放响应体 */
+      }
+    }
+    release();
   }
-  return cfg.type === 'anthropic'
-    ? parseAnthropicJson(res, startedAt)
-    : cfg.type === 'codex'
-      ? parseResponsesJson(res, startedAt)
-      : parseOpenAiJson(res, startedAt);
 }
 
 /* ---------- 上游 SSE 解析 ---------- */
 
-/** 从响应体逐个取出 SSE 事件的 data 负载（多行 data 按 spec 拼接） */
-async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+/**
+ * 逐块读取响应体。signal 取消时主动 cancel reader，因此即使 mock/中转没有把
+ * fetch signal 绑到返回的流，等待中的 read 也会立即结束并释放资源。
+ */
+async function* bodyChunks(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): AsyncGenerator<Uint8Array> {
   const reader = body.getReader();
+  const cancelReader = (): void => {
+    void reader.cancel(signal.reason).catch(() => {
+      /* 重复取消或底层已经关闭 */
+    });
+  };
+  let listening = false;
+  try {
+    signal.throwIfAborted();
+    signal.addEventListener('abort', cancelReader, { once: true });
+    listening = true;
+    for (;;) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      yield value;
+    }
+  } finally {
+    if (listening) signal.removeEventListener('abort', cancelReader);
+    try {
+      await reader.cancel();
+    } catch {
+      /* 已读完或已取消时是 no-op */
+    } finally {
+      reader.releaseLock();
+    }
+  }
+}
+
+/** 从响应体逐个取出 SSE 事件的 data 负载（多行 data 按 spec 拼接） */
+async function* sseData(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): AsyncGenerator<string> {
   const decoder = new TextDecoder();
   let buf = '';
   const dataOf = (rawEvent: string): string | null => {
@@ -325,30 +452,20 @@ async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string
     const joined = parts.join('\n');
     return joined === '' ? null : joined;
   };
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // 统一换行后按空行切事件，残段留在 buf 里等下一轮
-      buf = buf.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      let sep: number;
-      while ((sep = buf.indexOf('\n\n')) !== -1) {
-        const data = dataOf(buf.slice(0, sep));
-        buf = buf.slice(sep + 2);
-        if (data) yield data;
-      }
-    }
-    buf += decoder.decode(); // 冲掉 decoder 里可能残留的字节
-    const tail = dataOf(buf); // 没有空行收尾的最后一段也认
-    if (tail) yield tail;
-  } finally {
-    try {
-      await reader.cancel(); // 出错或客户端断开导致提前退出时，顺手取消上游
-    } catch {
-      /* 已读完时是 no-op */
+  for await (const value of bodyChunks(body, signal)) {
+    buf += decoder.decode(value, { stream: true });
+    // 统一换行后按空行切事件，残段留在 buf 里等下一轮
+    buf = buf.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    let sep: number;
+    while ((sep = buf.indexOf('\n\n')) !== -1) {
+      const data = dataOf(buf.slice(0, sep));
+      buf = buf.slice(sep + 2);
+      if (data) yield data;
     }
   }
+  buf += decoder.decode(); // 冲掉 decoder 里可能残留的字节
+  const tail = dataOf(buf); // 没有空行收尾的最后一段也认
+  if (tail) yield tail;
 }
 
 function parseJsonObject(data: string): JsonObject | null {
@@ -379,6 +496,7 @@ async function relaySse(
   type: 'anthropic' | 'openai' | 'codex',
   onDelta: (delta: string) => void,
   startedAt: number,
+  signal: AbortSignal,
 ): Promise<string> {
   if (!res.body) throw new Error(`端点返回 ${res.status}，但没有响应体`);
   let text = '';
@@ -387,7 +505,7 @@ async function relaySse(
   let refusal = '';
   let finishNote = '';
 
-  for await (const data of sseData(res.body)) {
+  for await (const data of sseData(res.body, signal)) {
     if (data === '[DONE]') {
       completed = true;
       break;
@@ -520,8 +638,12 @@ async function relaySse(
 
 /* ---------- 上游完整 JSON 响应（不支持流式的中转 / 直接报错） ---------- */
 
-async function parseAnthropicJson(res: Response, startedAt: number): Promise<string> {
-  const data = await readJson(res);
+async function parseAnthropicJson(
+  res: Response,
+  startedAt: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const data = await readJson(res, signal);
   const content = Array.isArray(data.content) ? data.content : [];
   const failure = endpointError(res, data, content.length > 0);
   if (failure) throw failure;
@@ -542,8 +664,12 @@ async function parseAnthropicJson(res: Response, startedAt: number): Promise<str
   return text;
 }
 
-async function parseOpenAiJson(res: Response, startedAt: number): Promise<string> {
-  const data = await readJson(res);
+async function parseOpenAiJson(
+  res: Response,
+  startedAt: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const data = await readJson(res, signal);
   const choices = Array.isArray(data.choices) ? data.choices : [];
   const choice = asObject(choices[0]);
   const message = asObject(choice?.message);
@@ -582,8 +708,12 @@ async function parseOpenAiJson(res: Response, startedAt: number): Promise<string
   return text;
 }
 
-async function parseResponsesJson(res: Response, startedAt: number): Promise<string> {
-  const data = await readJson(res);
+async function parseResponsesJson(
+  res: Response,
+  startedAt: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const data = await readJson(res, signal);
   const text =
     responsesText(data) || (typeof data.output_text === 'string' ? data.output_text : '');
   const failure = endpointError(res, data, text.trim() !== '');

@@ -11,6 +11,7 @@ afterEach(() => {
 function request(
   type: 'openai' | 'anthropic' | 'codex' = 'openai',
   extra: Record<string, unknown> = {},
+  signal?: AbortSignal,
 ): Request {
   return new Request('http://localhost/api/llm', {
     method: 'POST',
@@ -24,14 +25,18 @@ function request(
       user: 'user',
       ...extra,
     }),
+    signal,
   });
 }
 
 async function post(
   type?: 'openai' | 'anthropic' | 'codex',
   extra: Record<string, unknown> = {},
+  signal?: AbortSignal,
 ): Promise<Response> {
-  const response = await POST({ request: request(type, extra) } as Parameters<typeof POST>[0]);
+  const response = await POST({ request: request(type, extra, signal) } as Parameters<
+    typeof POST
+  >[0]);
   assert.ok(response instanceof Response);
   return response;
 }
@@ -314,8 +319,11 @@ function chatRequest(
 async function postChat(
   type?: 'openai' | 'anthropic' | 'codex',
   extra: Record<string, unknown> = {},
+  signal?: AbortSignal,
 ): Promise<Response> {
-  const response = await POST({ request: chatRequest(type, extra) } as Parameters<typeof POST>[0]);
+  const chat = chatRequest(type, extra);
+  const request = signal ? new Request(chat, { signal }) : chat;
+  const response = await POST({ request } as Parameters<typeof POST>[0]);
   assert.ok(response instanceof Response);
   return response;
 }
@@ -432,4 +440,167 @@ test('rejects a body with neither user nor messages', async () => {
 
   const response = await post('openai', { user: undefined });
   assert.equal(response.status, 400);
+});
+
+/* ---------- 取消、保活与资源清理（issue #12） ---------- */
+
+function controlledSse(initialChunks: readonly string[] = []): {
+  response: Response;
+  send: (chunk: string) => void;
+  cancelCount: () => number;
+} {
+  const encoder = new TextEncoder();
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let canceled = 0;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+      for (const chunk of initialChunks) controller.enqueue(encoder.encode(chunk));
+    },
+    cancel() {
+      canceled += 1;
+    },
+  });
+  return {
+    response: new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }),
+    send(chunk) {
+      assert.ok(streamController);
+      streamController.enqueue(encoder.encode(chunk));
+    },
+    cancelCount: () => canceled,
+  };
+}
+
+test('an already-cancelled HTTP request never calls any upstream protocol', async () => {
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('不应触达上游');
+  };
+
+  for (const type of ['openai', 'anthropic', 'codex'] as const) {
+    const controller = new AbortController();
+    controller.abort(new DOMException('stopped before start', 'AbortError'));
+    const response = await postChat(type, {}, controller.signal);
+    assert.equal(await response.text(), '');
+  }
+
+  assert.equal(fetchCalls, 0);
+});
+
+test('HTTP cancellation while waiting for headers aborts once without retrying', async () => {
+  const upstreamSignals: AbortSignal[] = [];
+  globalThis.fetch = async (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error('上游 fetch 缺少 signal');
+      upstreamSignals.push(signal);
+      const rejectAbort = () => reject(signal.reason);
+      if (signal.aborted) rejectAbort();
+      else signal.addEventListener('abort', rejectAbort, { once: true });
+    });
+
+  const controller = new AbortController();
+  const response = await postChat('openai', {}, controller.signal);
+  controller.abort(new DOMException('learner stopped', 'AbortError'));
+
+  assert.equal(await response.text(), '');
+  assert.equal(upstreamSignals.length, 1);
+  assert.equal(upstreamSignals[0]?.aborted, true);
+});
+
+test('downstream stream cancellation aborts fetch and releases each protocol response body', async () => {
+  const deltas = {
+    openai: 'data: {"choices":[{"delta":{"content":"片段"}}]}\n\n',
+    anthropic:
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"片段"}}\n\n',
+    codex: 'data: {"type":"response.output_text.delta","delta":"片段"}\n\n',
+  } as const;
+
+  for (const type of ['openai', 'anthropic', 'codex'] as const) {
+    const upstream = controlledSse([deltas[type]]);
+    const upstreamSignals: AbortSignal[] = [];
+    let fetchCalls = 0;
+    globalThis.fetch = async (_url, init) => {
+      fetchCalls += 1;
+      if (init?.signal) upstreamSignals.push(init.signal);
+      return upstream.response;
+    };
+
+    const response = await postChat(type);
+    assert.ok(response.body);
+    const reader = response.body.getReader();
+    const first = await reader.read();
+    assert.match(new TextDecoder().decode(first.value), /"text":"片段"/);
+    await reader.cancel('browser disconnected');
+    await Promise.resolve();
+
+    assert.equal(fetchCalls, 1);
+    assert.equal(upstreamSignals.at(-1)?.aborted, true);
+    assert.equal(upstream.cancelCount(), 1);
+    assert.equal(upstream.response.body?.locked, false);
+  }
+});
+
+test('reasoning-only streams keep the downstream alive, then clean timers and listeners', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const upstream = controlledSse([
+    'data: {"choices":[{"delta":{"reasoning_content":"still thinking"}}]}\n\n',
+  ]);
+  const upstreamSignals: AbortSignal[] = [];
+  globalThis.fetch = async (_url, init) => {
+    if (init?.signal) upstreamSignals.push(init.signal);
+    return upstream.response;
+  };
+  const requestController = new AbortController();
+  const response = await postChat('openai', {}, requestController.signal);
+  assert.ok(response.body);
+  const reader = response.body.getReader();
+
+  t.mock.timers.tick(15_000);
+  const keepalive = await reader.read();
+  assert.equal(new TextDecoder().decode(keepalive.value), ': keepalive\n\n');
+
+  upstream.send('data: {"choices":[{"delta":{"content":"答"}}]}\n\n');
+  upstream.send('data: [DONE]\n\n');
+  const rest: string[] = [];
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    rest.push(new TextDecoder().decode(chunk.value));
+  }
+  assert.match(rest.join(''), /data: \{"text":"答"\}/);
+  assert.match(rest.join(''), /data: \[DONE\]/);
+  assert.equal(upstream.cancelCount(), 1);
+
+  // headers 和响应体都已完成：旧 request 的 signal 监听与 headers timeout 已移除。
+  requestController.abort(new DOMException('late abort', 'AbortError'));
+  t.mock.timers.tick(180_000);
+  assert.equal(upstreamSignals.at(-1)?.aborted, false);
+});
+
+test('the 180-second timeout only covers waiting for upstream headers', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const upstreamSignals: AbortSignal[] = [];
+  let fetchCalls = 0;
+  globalThis.fetch = async (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      fetchCalls += 1;
+      const signal = init?.signal;
+      if (!signal) throw new Error('上游 fetch 缺少 signal');
+      upstreamSignals.push(signal);
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+
+  const response = await postChat('openai');
+  t.mock.timers.tick(180_000);
+  const events = await readSse(response);
+
+  assert.equal(fetchCalls, 1);
+  assert.equal(upstreamSignals.at(-1)?.aborted, true);
+  assert.ok(events.some((event) => event.includes('端点请求超过 180 秒，已取消')));
+  assert.ok(!events.includes('data: [DONE]'));
 });

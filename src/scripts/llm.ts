@@ -5,9 +5,9 @@
  *
  * 实际转发由同站点的服务端代理 /api/llm 完成（见 src/pages/api/llm.ts）：各种
  * 中转 / OpenAI 兼容端点通常不带 CORS 头，浏览器直连会跨域失败，服务端没有这
- * 个限制。key 仍然只存在浏览器里，代理只透传不落盘。代理走 SSE 流式转发，
- * 慢模型不会被 Cloudflare 边缘的超时掐断（524）。出题走 system + user 一次性
- * 生成；答疑走 system + messages 多轮对话（ADR-0003）。
+ * 个限制。key 仍然只存在浏览器里，代理只透传不落盘。代理用 SSE 保活
+ * 浏览器到 Worker 的下游连接；上游仍受独立的 headers 超时及托管平台限制。
+ * 出题走 system + user 一次性生成；答疑走 system + messages 多轮对话（ADR-0003）。
  */
 import { z } from 'zod';
 import { schemaForPrompt, dataFactsForDay } from '../data/schema';
@@ -161,15 +161,25 @@ ${day.drill.map((x, i) => `${i + 1}. ${stripTags(x)}`).join('\n')}${
  * 读代理的 SSE：逐个产出 {text} 增量；{error} 抛错；[DONE] 正常收尾；流意外
  * 断开抛错。出题（计字数进度）与答疑（逐段拼累计文本）都建立在它上面。
  */
-export async function* sseDeltas(res: Response): AsyncGenerator<string> {
+export async function* sseDeltas(res: Response, signal?: AbortSignal): AsyncGenerator<string> {
   if (!res.body) throw new Error('浏览器不支持流式读取，换个现代浏览器试试');
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
   let done = false;
+  const cancelReader = (): void => {
+    void reader.cancel(signal?.reason).catch(() => {
+      /* 重复取消或流已关闭 */
+    });
+  };
+  let listening = false;
   try {
+    signal?.throwIfAborted();
+    signal?.addEventListener('abort', cancelReader, { once: true });
+    listening = signal !== undefined;
     for (;;) {
       const { done: finished, value } = await reader.read();
+      signal?.throwIfAborted();
       if (finished) break;
       // 统一换行后按空行切事件；残段留在 buf 里等下一轮。注释行（保活）不带 data:，自然跳过
       buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
@@ -194,10 +204,13 @@ export async function* sseDeltas(res: Response): AsyncGenerator<string> {
       }
     }
   } finally {
-    void reader.cancel().catch(() => {
+    if (listening) signal?.removeEventListener('abort', cancelReader);
+    await reader.cancel().catch(() => {
       /* 已读完时是 no-op */
     });
+    reader.releaseLock();
   }
+  signal?.throwIfAborted();
   if (!done) throw new Error('连接中断，响应不完整，重试一次通常就好');
 }
 
@@ -226,7 +239,8 @@ function sseDataOf(event: string): string | null {
 /**
  * 答疑多轮对话走 /api/llm 的对话模式（body 带 messages，见 docs/adr/0003）：
  * 逐个产出增量，调用方拼累计文本；上游不支持流式时整段当单个增量补发（同
- * callViaProxy 的降级路径）。流式能避开 Cloudflare 边缘的 100 秒超时（ADR-0002）。
+ * callViaProxy 的降级路径）。代理保活浏览器到 Worker 的下游连接（ADR-0002），
+ * 不改变上游自身的 headers 超时或托管平台限制。
  */
 export async function* chatViaProxy(
   cfg: LlmConfig,
@@ -234,6 +248,7 @@ export async function* chatViaProxy(
   messages: readonly ChatTurn[],
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
+  signal?.throwIfAborted();
   const res = await fetch('/api/llm', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -257,7 +272,7 @@ export async function* chatViaProxy(
     return;
   }
   let text = '';
-  for await (const delta of sseDeltas(res)) {
+  for await (const delta of sseDeltas(res, signal)) {
     text += delta;
     yield delta;
   }
@@ -266,9 +281,9 @@ export async function* chatViaProxy(
 
 /**
  * 出题的一次性生成（system + user，非对话模式）：代理默认以 SSE 流式转发
- * （见 docs/adr/0002），慢模型不会被 Cloudflare 边缘掐成 524。onProgress
- * 回调收到目前已累计的字符数。兼容旧版代理返回的完整 JSON（部署切换期 /
- * 上游不支持流式时的降级路径）。
+ * （见 docs/adr/0002），每 15 秒的注释保活浏览器到 Worker 的下游连接。
+ * onProgress 回调收到目前已累计的字符数。兼容旧版代理返回的完整 JSON
+ * （部署切换期 / 上游不支持流式时的降级路径）。
  */
 async function callViaProxy(
   cfg: LlmConfig,

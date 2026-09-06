@@ -29,7 +29,10 @@ export function qaChatAdapter(day: GenContextDay): ChatModelAdapter {
       const turns: ChatTurn[] = [];
       for (const m of messages) {
         if (m.role !== 'user' && m.role !== 'assistant') continue;
-        turns.push({ role: m.role, content: textOf(m) });
+        const content = textOf(m);
+        // assistant-ui 会保留被停止的空 assistant 占位；下一轮不要把它发给严格 schema。
+        if (!content.trim()) continue;
+        turns.push({ role: m.role, content });
       }
       const last = turns.at(-1);
       if (!last || last.role !== 'user' || !last.content.trim()) {

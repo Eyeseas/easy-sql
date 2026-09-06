@@ -10,3 +10,5 @@ dist/
 # 本地工具产物
 .claude/
 .playwright-mcp/
+test-results/
+playwright-report/
