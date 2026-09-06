@@ -21,7 +21,12 @@
  */
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
-import { DEFAULT_REASONING, REASONING_LEVELS, reasoningSupport } from '../../shared/llmConfig';
+import {
+  DEFAULT_REASONING,
+  REASONING_LEVELS,
+  knownReasoningCapability,
+  reasoningSupport,
+} from '../../shared/llmConfig';
 
 export const prerender = false;
 
@@ -344,6 +349,18 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
       },
     };
   }
+  // Only verified OpenAI models with an explicit effort switch token fields. Provider-default
+  // and unknown compatible gateways retain the existing max_tokens request shape.
+  const openAiCapability = knownReasoningCapability(cfg.type, cfg.model);
+  const useMaxCompletionTokens =
+    cfg.reasoning !== DEFAULT_REASONING &&
+    openAiCapability?.endpointType === 'openai' &&
+    openAiCapability.chatCompletionTokenField === 'max_completion_tokens';
+  const completionLimit = useMaxCompletionTokens
+    ? {
+        max_completion_tokens: Math.min(8_000, openAiCapability.maxOutputTokens ?? 8_000),
+      }
+    : { max_tokens: 8_000 };
   return {
     url: joinUrl(cfg.baseUrl, '/chat/completions'),
     init: {
@@ -354,7 +371,8 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
       },
       body: JSON.stringify({
         model: cfg.model,
-        max_tokens: 8000,
+        ...completionLimit,
+        ...(cfg.reasoning === DEFAULT_REASONING ? {} : { reasoning_effort: cfg.reasoning }),
         ...streamField,
         // JSON mode 是出题（一次性生成、要解析成练习 JSON）才需要的；答疑对话要自由文本
         ...(chat ? {} : { response_format: { type: 'json_object' } }),
@@ -543,7 +561,7 @@ async function relaySse(
       if (finish) {
         finishNote = `finish_reason=${finish}`;
         if (finish === 'length') {
-          throw new Error('输出被 max_tokens 截断（finish_reason=length），JSON 不完整');
+          throw new Error('输出达到 token 上限并被截断（finish_reason=length），JSON 不完整');
         }
       }
       continue;

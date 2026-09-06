@@ -63,12 +63,16 @@ async function readSse(response: Response): Promise<string[]> {
 /* ---------- 旧的整段 JSON 行为（不带 stream 的兼容路径） ---------- */
 
 test('surfaces an error body even when an OpenAI-compatible endpoint returns 200', async () => {
-  globalThis.fetch = async () =>
-    Response.json({ error: { message: 'upstream timed out after 200 seconds' } });
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({ error: { message: 'upstream timed out after 200 seconds' } });
+  };
 
   const response = await post();
   const body = (await response.json()) as { error?: string };
 
+  assert.equal(calls, 1);
   assert.equal(response.status, 502);
   assert.match(body.error ?? '', /upstream timed out after 200 seconds/);
 });
@@ -87,7 +91,7 @@ test('reports an empty OpenAI completion with its finish reason', async () => {
 
 /* ---------- 流式转发（stream: true） ---------- */
 
-test('relays an OpenAI SSE stream and terminates with [DONE]', async () => {
+test('relays an explicit OpenAI effort for generation and terminates with [DONE]', async () => {
   let upstreamBody: Record<string, unknown> = {};
   globalThis.fetch = async (_url, init) => {
     upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -101,15 +105,43 @@ test('relays an OpenAI SSE stream and terminates with [DONE]', async () => {
     ]);
   };
 
-  const response = await post('openai', { stream: true });
+  const response = await post('openai', { stream: true, reasoning: 'medium' });
   const events = await readSse(response);
 
   assert.equal(upstreamBody.stream, true); // 确实向上游要了流式
+  assert.equal(upstreamBody.reasoning_effort, 'medium');
+  assert.equal(upstreamBody.reasoning, undefined); // Chat Completions 不用 Responses 的嵌套字段
+  assert.equal(upstreamBody.max_tokens, 8_000); // 未知兼容模型保持原字段
+  assert.equal(upstreamBody.max_completion_tokens, undefined);
   const payloads = events
     .filter((e) => e.startsWith('data: {'))
     .map((e) => JSON.parse(e.slice(6)) as { text?: string });
   assert.deepEqual(payloads, [{ text: '{"exercises":[]}' }]); // 两个 chunk 重组成了同一条增量
   assert.equal(events.at(-1), 'data: [DONE]');
+});
+
+test('uses max_completion_tokens for a documented GPT-5 effort without raising the app limit', async () => {
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"choices":[{"delta":{"content":"完成"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+  };
+
+  const response = await post('openai', {
+    stream: true,
+    model: 'gpt-5-2025-08-07',
+    reasoning: 'minimal',
+  });
+  await readSse(response);
+
+  assert.equal(upstreamBody.reasoning_effort, 'minimal');
+  assert.equal(upstreamBody.reasoning, undefined);
+  assert.equal(upstreamBody.max_completion_tokens, 8_000);
+  assert.equal(upstreamBody.max_tokens, undefined);
 });
 
 test('relays an Anthropic SSE stream until message_stop', async () => {
@@ -127,31 +159,62 @@ test('relays an Anthropic SSE stream until message_stop', async () => {
   assert.deepEqual(events, ['data: {"text":"你好"}', 'data: {"text":"，世界"}', 'data: [DONE]']);
 });
 
-test('falls back to one-shot JSON when the upstream ignores stream', async () => {
-  globalThis.fetch = async () =>
-    Response.json({ choices: [{ message: { content: '完整结果' }, finish_reason: 'stop' }] });
+test('falls back to one-shot JSON once when the upstream ignores stream', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({
+      choices: [{ message: { content: '完整结果' }, finish_reason: 'stop' }],
+    });
+  };
 
   const response = await post('openai', { stream: true });
   const events = await readSse(response);
+
+  assert.equal(calls, 1);
 
   assert.deepEqual(events, ['data: {"text":"完整结果"}', 'data: [DONE]']);
 });
 
-test('surfaces an in-stream error event and skips [DONE]', async () => {
-  globalThis.fetch = async () =>
-    sseUp([
+test('surfaces an in-stream error event once and skips [DONE]', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return sseUp([
       'data: {"choices":[{"delta":{"content":"一半"}}]}\n\n',
       'data: {"error":{"message":"boom"}}\n\n',
     ]);
+  };
 
-  const response = await post('openai', { stream: true });
+  const response = await post('openai', { stream: true, reasoning: 'low' });
   const events = await readSse(response);
 
+  assert.equal(calls, 1);
   assert.ok(events.includes('data: {"error":"端点在流里报错：boom"}'));
   assert.ok(!events.includes('data: [DONE]'));
 });
 
-test('reports upstream truncation by max_tokens in stream mode', async () => {
+test('reports a reasoning-only OpenAI stream once without exposing reasoning as text', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return sseUp([
+      'data: {"choices":[{"delta":{"reasoning_content":"private reasoning"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+  };
+
+  const response = await post('openai', { stream: true, reasoning: 'high' });
+  const events = await readSse(response);
+
+  assert.equal(calls, 1);
+  assert.ok(events.some((event) => event.includes('只返回了 reasoning_content')));
+  assert.ok(events.every((event) => !event.includes('private reasoning')));
+  assert.ok(!events.includes('data: [DONE]'));
+});
+
+test('reports upstream truncation at the configured token limit in stream mode', async () => {
   globalThis.fetch = async () =>
     sseUp([
       'data: {"choices":[{"delta":{"content":"abc"}}]}\n\n',
@@ -162,7 +225,7 @@ test('reports upstream truncation by max_tokens in stream mode', async () => {
   const response = await post('openai', { stream: true });
   const events = await readSse(response);
 
-  assert.ok(events.some((e) => e.includes('max_tokens')));
+  assert.ok(events.some((e) => e.includes('token 上限')));
   assert.ok(!events.includes('data: [DONE]'));
 });
 
@@ -366,7 +429,7 @@ test('chat mode: relays the full conversation to OpenAI-compatible endpoints wit
     ]);
   };
 
-  const response = await postChat();
+  const response = await postChat('openai', { reasoning: 'high' });
   const events = await readSse(response);
 
   assert.deepEqual(upstreamBody.messages, [
@@ -377,6 +440,10 @@ test('chat mode: relays the full conversation to OpenAI-compatible endpoints wit
   ]);
   assert.equal(upstreamBody.response_format, undefined); // 对话是自由文本，不开出题的 JSON mode
   assert.equal(upstreamBody.stream, true);
+  assert.equal(upstreamBody.reasoning_effort, 'high');
+  assert.equal(upstreamBody.reasoning, undefined);
+  assert.equal(upstreamBody.max_tokens, 8_000);
+  assert.equal(upstreamBody.max_completion_tokens, undefined);
   assert.deepEqual(events, ['data: {"text":"思"}', 'data: {"text":"路是"}', 'data: [DONE]']);
 });
 
@@ -450,6 +517,15 @@ test('rejects invalid or incompatible reasoning before touching the upstream', a
   assert.equal((await post('anthropic', { reasoning: 'high' })).status, 400);
   assert.equal(
     (
+      await post('openai', {
+        model: 'gpt-5',
+        reasoning: 'xhigh',
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
       await post('codex', {
         model: 'gpt-5-codex',
         reasoning: 'xhigh',
@@ -458,6 +534,32 @@ test('rejects invalid or incompatible reasoning before touching the upstream', a
     400,
   );
   assert.equal(calls, 0);
+});
+
+test('allows a common effort for an unknown OpenAI-compatible model without retrying rejection', async () => {
+  const apiKey = 'openai-secret-that-must-not-leak';
+  let calls = 0;
+  let seenBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    seenBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({ error: { message: `upstream rejected ${apiKey}` } }, { status: 400 });
+  };
+
+  const response = await post('openai', {
+    model: 'private-chat-alias',
+    apiKey,
+    reasoning: 'low',
+  });
+  const body = (await response.json()) as { error?: string };
+
+  assert.equal(calls, 1);
+  assert.equal(seenBody.reasoning_effort, 'low');
+  assert.equal(seenBody.max_tokens, 8_000);
+  assert.equal(seenBody.max_completion_tokens, undefined);
+  assert.equal(response.status, 502);
+  assert.doesNotMatch(body.error ?? '', /openai-secret-that-must-not-leak/);
+  assert.match(body.error ?? '', /<REDACTED>/);
 });
 
 test('allows a common effort for an unknown Codex model without retrying rejected requests', async () => {
@@ -484,7 +586,7 @@ test('allows a common effort for an unknown Codex model without retrying rejecte
   assert.match(body.error ?? '', /<REDACTED>/);
 });
 
-test('one-shot mode still asks OpenAI-compatible endpoints for JSON mode', async () => {
+test('provider-default preserves the current GPT-5 request shape and generation JSON mode', async () => {
   let upstreamBody: Record<string, unknown> = {};
   globalThis.fetch = async (_url, init) => {
     upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -495,10 +597,14 @@ test('one-shot mode still asks OpenAI-compatible endpoints for JSON mode', async
     ]);
   };
 
-  await post('openai', { stream: true });
+  await post('openai', { stream: true, model: 'gpt-5' });
 
   // 双模式分界锁死：不带 messages 的旧调用方（出题）仍走 JSON mode
   assert.deepEqual(upstreamBody.response_format, { type: 'json_object' });
+  assert.equal(upstreamBody.reasoning_effort, undefined);
+  assert.equal(upstreamBody.reasoning, undefined);
+  assert.equal(upstreamBody.max_tokens, 8_000);
+  assert.equal(upstreamBody.max_completion_tokens, undefined);
   assert.deepEqual(upstreamBody.messages, [
     { role: 'system', content: 'system' },
     { role: 'user', content: 'user' },

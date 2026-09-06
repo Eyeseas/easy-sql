@@ -15,12 +15,15 @@ export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
 export const DEFAULT_REASONING = 'provider-default' as const;
 
-const COMMON_CODEX_EFFORTS = ['low', 'medium', 'high'] as const;
+const COMMON_REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
 
 export interface KnownReasoningCapability {
-  readonly endpointType: 'codex';
+  readonly endpointType: 'openai' | 'codex';
   readonly models: readonly string[];
   readonly efforts: readonly Exclude<ReasoningLevel, 'provider-default'>[];
+  /** OpenAI Chat Completions reasoning models reject/deprecate the legacy max_tokens field. */
+  readonly chatCompletionTokenField?: 'max_completion_tokens';
+  readonly maxOutputTokens?: number;
   readonly sources: readonly string[];
 }
 
@@ -30,9 +33,20 @@ export interface KnownReasoningCapability {
  */
 export const KNOWN_REASONING_CAPABILITIES: readonly KnownReasoningCapability[] = [
   {
+    endpointType: 'openai',
+    models: ['gpt-5', 'gpt-5-2025-08-07'],
+    efforts: ['minimal', ...COMMON_REASONING_EFFORTS],
+    chatCompletionTokenField: 'max_completion_tokens',
+    maxOutputTokens: 128_000,
+    sources: [
+      'https://developers.openai.com/api/docs/models/gpt-5',
+      'https://github.com/openai/openai-openapi/blob/master/openapi.yaml',
+    ],
+  },
+  {
     endpointType: 'codex',
     models: ['gpt-5-codex'],
-    efforts: COMMON_CODEX_EFFORTS,
+    efforts: COMMON_REASONING_EFFORTS,
     sources: [
       'https://developers.openai.com/api/docs/models/gpt-5-codex',
       'https://developers.openai.com/api/docs/guides/reasoning',
@@ -41,7 +55,7 @@ export const KNOWN_REASONING_CAPABILITIES: readonly KnownReasoningCapability[] =
   {
     endpointType: 'codex',
     models: ['gpt-5.3-codex'],
-    efforts: [...COMMON_CODEX_EFFORTS, 'xhigh'],
+    efforts: [...COMMON_REASONING_EFFORTS, 'xhigh'],
     sources: ['https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide'],
   },
 ];
@@ -60,7 +74,7 @@ export function knownReasoningCapability(
   type: LlmEndpointType,
   model: string,
 ): KnownReasoningCapability | null {
-  if (type !== 'codex') return null;
+  if (type === 'anthropic') return null;
   const normalizedModel = model.trim().toLowerCase();
   return (
     KNOWN_REASONING_CAPABILITIES.find(
@@ -74,9 +88,9 @@ export function availableReasoningLevels(
   type: LlmEndpointType,
   model: string,
 ): readonly ReasoningLevel[] {
-  if (type !== 'codex') return [DEFAULT_REASONING];
+  if (type === 'anthropic') return [DEFAULT_REASONING];
   const capability = knownReasoningCapability(type, model);
-  return [DEFAULT_REASONING, ...(capability?.efforts ?? COMMON_CODEX_EFFORTS)];
+  return [DEFAULT_REASONING, ...(capability?.efforts ?? COMMON_REASONING_EFFORTS)];
 }
 
 export function reasoningSupport(
@@ -85,11 +99,11 @@ export function reasoningSupport(
   reasoning: ReasoningLevel,
 ): ReasoningSupport {
   if (reasoning === DEFAULT_REASONING) return 'provider-default';
-  if (type !== 'codex') return 'unsupported';
+  if (type === 'anthropic') return 'unsupported';
 
   const capability = knownReasoningCapability(type, model);
   if (capability) return capability.efforts.includes(reasoning) ? 'verified' : 'unsupported';
-  return COMMON_CODEX_EFFORTS.includes(reasoning as (typeof COMMON_CODEX_EFFORTS)[number])
+  return COMMON_REASONING_EFFORTS.includes(reasoning as (typeof COMMON_REASONING_EFFORTS)[number])
     ? 'unverified'
     : 'unsupported';
 }

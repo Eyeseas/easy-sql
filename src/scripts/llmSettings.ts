@@ -69,7 +69,7 @@ function syncReasoningOptions(
   const note = dlg.querySelector<HTMLElement>('[data-llm-reasoning-note]');
   if (note) {
     const capability = knownReasoningCapability(type, model);
-    if (type !== 'codex') {
+    if (type === 'anthropic') {
       note.textContent = '该端点暂只使用模型默认，不会发送推理参数。';
     } else if (capability) {
       note.textContent = `已验证选项：${capability.efforts.map((level) => REASONING_LABELS[level]).join(' / ')}。`;
