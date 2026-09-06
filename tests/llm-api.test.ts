@@ -144,19 +144,117 @@ test('uses max_completion_tokens for a documented GPT-5 effort without raising t
   assert.equal(upstreamBody.max_tokens, undefined);
 });
 
-test('relays an Anthropic SSE stream until message_stop', async () => {
-  globalThis.fetch = async () =>
-    sseUp([
+test('relays an Anthropic SSE stream until message_stop without default reasoning fields', async () => {
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
       'data: {"type":"message_start"}\n\n',
       'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}\n\n',
       'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"，世界"}}\n\n',
       'data: {"type":"message_stop"}\n\n',
     ]);
+  };
 
   const response = await post('anthropic', { stream: true });
   const events = await readSse(response);
 
+  assert.equal(upstreamBody.max_tokens, 16_000);
+  assert.equal(upstreamBody.thinking, undefined);
+  assert.equal(upstreamBody.output_config, undefined);
   assert.deepEqual(events, ['data: {"text":"你好"}', 'data: {"text":"，世界"}', 'data: [DONE]']);
+});
+
+test('anthropic adaptive: sends native thinking and effort fields and filters thinking deltas', async () => {
+  let calls = 0;
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"type":"message_start"}\n\n',
+      'data: {"type":"content_block_start","content_block":{"type":"thinking","thinking":""}}\n\n',
+      'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"internal"}}\n\n',
+      'data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"sig"}}\n\n',
+      'data: {"type":"content_block_stop"}\n\n',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"最终答案"}}\n\n',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+      'data: {"type":"message_stop"}\n\n',
+    ]);
+  };
+
+  const response = await post('anthropic', {
+    model: 'claude-opus-5',
+    reasoning: 'xhigh',
+    stream: true,
+  });
+  const events = await readSse(response);
+
+  assert.equal(calls, 1);
+  assert.equal(upstreamBody.max_tokens, 16_000);
+  assert.deepEqual(upstreamBody.thinking, { type: 'adaptive' });
+  assert.deepEqual(upstreamBody.output_config, { effort: 'xhigh' });
+  assert.equal((upstreamBody.thinking as Record<string, unknown>).budget_tokens, undefined);
+  assert.deepEqual(events, ['data: {"text":"最终答案"}', 'data: [DONE]']);
+});
+
+test('anthropic budget: maps low, medium, and high to fixed budgets below total output', async () => {
+  const upstreamBodies: Record<string, unknown>[] = [];
+  globalThis.fetch = async (_url, init) => {
+    upstreamBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return sseUp([
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"完成"}}\n\n',
+      'data: {"type":"message_stop"}\n\n',
+    ]);
+  };
+
+  for (const reasoning of ['low', 'medium', 'high'] as const) {
+    await readSse(
+      await post('anthropic', {
+        model: 'claude-haiku-4-5',
+        reasoning,
+        stream: true,
+      }),
+    );
+  }
+
+  assert.deepEqual(
+    upstreamBodies.map((body) => body.thinking),
+    [
+      { type: 'enabled', budget_tokens: 1_024 },
+      { type: 'enabled', budget_tokens: 4_096 },
+      { type: 'enabled', budget_tokens: 8_192 },
+    ],
+  );
+  for (const body of upstreamBodies) {
+    assert.equal(body.max_tokens, 16_000);
+    assert.equal(body.output_config, undefined);
+    assert.ok(
+      ((body.thinking as Record<string, number>).budget_tokens ?? 0) < (body.max_tokens as number),
+    );
+  }
+});
+
+test('anthropic disabled: sends only thinking.type=disabled for a verified model', async () => {
+  let upstreamBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return sseUp([
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"直接回答"}}\n\n',
+      'data: {"type":"message_stop"}\n\n',
+    ]);
+  };
+
+  await readSse(
+    await post('anthropic', {
+      model: 'claude-sonnet-4-6',
+      reasoning: 'none',
+      stream: true,
+    }),
+  );
+
+  assert.deepEqual(upstreamBody.thinking, { type: 'disabled' });
+  assert.equal(upstreamBody.output_config, undefined);
 });
 
 test('falls back to one-shot JSON once when the upstream ignores stream', async () => {
@@ -227,6 +325,67 @@ test('reports upstream truncation at the configured token limit in stream mode',
 
   assert.ok(events.some((e) => e.includes('token 上限')));
   assert.ok(!events.includes('data: [DONE]'));
+});
+
+test('anthropic thinking-only and max_tokens streams fail without a successful terminator', async () => {
+  globalThis.fetch = async () =>
+    sseUp([
+      'data: {"type":"content_block_start","content_block":{"type":"thinking","thinking":"","signature":"sig"}}\n\n',
+      'data: {"type":"content_block_stop"}\n\n',
+      'data: {"type":"message_stop"}\n\n',
+    ]);
+
+  const thinkingOnly = await readSse(
+    await post('anthropic', {
+      model: 'claude-opus-5',
+      reasoning: 'high',
+      stream: true,
+    }),
+  );
+  assert.ok(thinkingOnly.some((event) => event.includes('没有任何文本')));
+  assert.ok(thinkingOnly.some((event) => event.includes('reasoning_content')));
+  assert.ok(!thinkingOnly.includes('data: [DONE]'));
+
+  globalThis.fetch = async () =>
+    sseUp([
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"半截"}}\n\n',
+      'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}\n\n',
+      'data: {"type":"message_stop"}\n\n',
+    ]);
+
+  const truncated = await readSse(
+    await post('anthropic', {
+      model: 'claude-haiku-4-5',
+      reasoning: 'high',
+      stream: true,
+    }),
+  );
+  assert.ok(truncated.some((event) => event.includes('max_tokens')));
+  assert.ok(!truncated.includes('data: [DONE]'));
+});
+
+test('anthropic complete JSON fallback filters thinking and does not retry', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({
+      content: [
+        { type: 'thinking', thinking: 'internal', signature: 'sig' },
+        { type: 'text', text: '完整答案' },
+      ],
+      stop_reason: 'end_turn',
+    });
+  };
+
+  const response = await post('anthropic', {
+    model: 'claude-haiku-4-5',
+    reasoning: 'low',
+    stream: true,
+  });
+  const events = await readSse(response);
+
+  assert.equal(calls, 1);
+  assert.deepEqual(events, ['data: {"text":"完整答案"}', 'data: [DONE]']);
 });
 
 /* ---------- codex（OpenAI Responses API） ---------- */
@@ -457,9 +616,14 @@ test('chat mode: anthropic gets system plus the conversation history', async () 
     ]);
   };
 
-  await postChat('anthropic');
+  await postChat('anthropic', {
+    model: 'claude-haiku-4-5',
+    reasoning: 'medium',
+  });
 
   assert.equal(upstreamBody.system, 'system');
+  assert.deepEqual(upstreamBody.thinking, { type: 'enabled', budget_tokens: 4_096 });
+  assert.equal(upstreamBody.output_config, undefined);
   assert.deepEqual(upstreamBody.messages, [
     { role: 'user', content: '第一问' },
     { role: 'assistant', content: '第一答' },
@@ -519,6 +683,33 @@ test('rejects invalid or incompatible reasoning before touching the upstream', a
     (
       await post('openai', {
         model: 'gpt-5',
+        reasoning: 'xhigh',
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await post('anthropic', {
+        model: 'claude-opus-5',
+        reasoning: 'minimal',
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await post('anthropic', {
+        model: 'claude-sonnet-4-6',
+        reasoning: 'xhigh',
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await post('anthropic', {
+        model: 'claude-haiku-4-5',
         reasoning: 'xhigh',
       })
     ).status,

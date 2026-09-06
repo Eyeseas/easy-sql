@@ -69,8 +69,13 @@ function syncReasoningOptions(
   const note = dlg.querySelector<HTMLElement>('[data-llm-reasoning-note]');
   if (note) {
     const capability = knownReasoningCapability(type, model);
-    if (type === 'anthropic') {
-      note.textContent = '该端点暂只使用模型默认，不会发送推理参数。';
+    if (type === 'anthropic' && capability?.endpointType === 'anthropic') {
+      note.textContent =
+        capability.thinkingMode === 'adaptive'
+          ? `已验证自适应思考：${capability.efforts.map((level) => REASONING_LABELS[level]).join(' / ')}。`
+          : '已验证固定预算：低 1024 / 中 4096 / 高 8192 tokens。';
+    } else if (type === 'anthropic') {
+      note.textContent = '未知 Claude 模型仅可使用模型默认，不会猜测思考模式。';
     } else if (capability) {
       note.textContent = `已验证选项：${capability.efforts.map((level) => REASONING_LABELS[level]).join(' / ')}。`;
     } else {

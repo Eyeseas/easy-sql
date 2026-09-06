@@ -24,8 +24,9 @@ import { z } from 'zod';
 import {
   DEFAULT_REASONING,
   REASONING_LEVELS,
+  anthropicRequestConfig,
   knownReasoningCapability,
-  reasoningSupport,
+  reasoningConfigurationError,
 } from '../../shared/llmConfig';
 
 export const prerender = false;
@@ -60,11 +61,9 @@ export const POST: APIRoute = async ({ request }) => {
     return Response.json({ error: '请求参数不对' }, { status: 400 });
   }
   const cfg = parsed.data;
-  if (reasoningSupport(cfg.type, cfg.model, cfg.reasoning) === 'unsupported') {
-    return Response.json(
-      { error: '所选思考等级与当前端点或模型不兼容，请在 AI 设置中改用模型默认' },
-      { status: 400 },
-    );
+  const configError = reasoningConfigurationError(cfg.type, cfg.model, cfg.reasoning);
+  if (configError) {
+    return Response.json({ error: configError }, { status: 400 });
   }
   // 出题走 system + user 一次性生成；答疑走 system + messages 多轮。两者必居其一
   if (!cfg.messages && cfg.user === undefined) {
@@ -288,6 +287,7 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
   // 对话模式（答疑多轮）：user 一次性提示词换成完整对话历史；不设 response_format
   const chat = cfg.messages ?? null;
   if (cfg.type === 'anthropic') {
+    const reasoning = anthropicRequestConfig(cfg.model, cfg.reasoning);
     return {
       url: joinUrl(cfg.baseUrl, '/v1/messages'),
       init: {
@@ -299,7 +299,9 @@ function upstreamRequest(cfg: Body, stream: boolean): { url: string; init: Reque
         },
         body: JSON.stringify({
           model: cfg.model,
-          max_tokens: 16000,
+          max_tokens: reasoning.maxTokens,
+          ...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
+          ...(reasoning.outputConfig ? { output_config: reasoning.outputConfig } : {}),
           ...streamField,
           system: cfg.system,
           messages: chat
@@ -636,6 +638,9 @@ async function relaySse(
     }
     if (kind === 'content_block_start') {
       const block = asObject(obj.content_block);
+      if (block?.type === 'thinking' || block?.type === 'redacted_thinking') {
+        sawReasoning = true;
+      }
       if (typeof block?.text === 'string' && block.text) {
         text += block.text;
         onDelta(block.text);
