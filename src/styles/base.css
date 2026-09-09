@@ -507,6 +507,12 @@ tr:last-child td {
   border-color: var(--danger);
 }
 
+/* 补漏是「还没复盘过的」，不是欠账也不是当天课表，单独一色 */
+.rv-origin.is-fill {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .rv-act {
   color: var(--ink-2);
   background: var(--surface-2);

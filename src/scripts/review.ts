@@ -12,6 +12,7 @@ import {
   EMPTY_LOG,
   applyVerdict,
   dueItems,
+  fillItem,
   mistakeBook,
   mistakesMarkdown,
   normalizeLog,
@@ -23,7 +24,9 @@ import {
   type ReviewSource,
   type ReviewVerdict,
 } from './reviewCore';
+import type { RecallPoint } from './llm';
 import { highlightSql } from '../utils/highlightSql';
+import { stripTags } from '../utils/promptText';
 
 const KEY = 'sql8w.review.v1';
 
@@ -52,7 +55,14 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** 到期错题项的标记：与 TodayReview.astro 渲染固定格时保持一致 */
+/** 出现理由的徽标：固定格由 Astro 渲染，这里只管客户端补上的补漏与错题 */
+function originBadge(origin: ReviewItem['origin']): string {
+  if (origin === 'fill') return '<span class="rv-origin is-fill">补漏</span>';
+  if (origin === 'due') return '<span class="rv-origin is-due">错题</span>';
+  return `<span class="rv-origin">D+${origin}</span>`;
+}
+
+/** 客户端补上的复盘项：与 TodayReview.astro 渲染固定格时保持一致 */
 function itemHtml(item: ReviewItem): string {
   const dd = String(item.fromDay).padStart(2, '0');
   const label = item.action === 'explain' ? '易错点' : '参考答案';
@@ -68,7 +78,7 @@ function itemHtml(item: ReviewItem): string {
 
   return `
     <div class="rv-meta">
-      <span class="rv-origin is-due">错题</span>
+      ${originBadge(item.origin)}
       <span class="rv-act">${ACTION_LABEL[item.action]}</span>
       <a class="rv-from" href="/day/${item.fromDay}">D${dd} ${escapeHtml(item.fromTitle)}</a>
     </div>
@@ -120,6 +130,28 @@ function bookHtml(entries: readonly MistakeEntry[]): string {
     .join('');
 }
 
+/**
+ * 把今天实际列出的复盘项写回 #recall-points，供随堂默写当「要一起考的旧知识点」。
+ * 服务端注入的那份只含三个固定格；补漏与到期错题依赖浏览器里的复盘记录，只能
+ * 在这里补齐。generator 在此之后才读它（见 main.ts 的启动顺序）。
+ */
+function syncRecallPoints(items: readonly HTMLElement[], source: ReviewSource): void {
+  const el = document.getElementById('recall-points');
+  if (!el) return;
+
+  const points: RecallPoint[] = [];
+  for (const li of items) {
+    const material = source[li.dataset.reviewItem ?? ''];
+    if (!material) continue;
+    points.push({
+      no: material.fromDay,
+      title: material.fromTitle,
+      point: stripTags(material.prompt),
+    });
+  }
+  if (points.length > 0) el.textContent = JSON.stringify(points);
+}
+
 /** 把某一条已有的判定画到界面上 */
 function paint(li: HTMLElement, verdict: ReviewVerdict | null): void {
   li.classList.toggle('is-judged', verdict !== null);
@@ -141,16 +173,28 @@ export function initReview(): void {
   const source = loadSource();
   let log = loadLog();
 
-  // 固定格已经占了的不重复出；到期的错题补在后面
+  // 固定格已经占了的不重复出。补漏格接在三个固定格之后，到期的错题再往后排
   const fixed = [...list.querySelectorAll<HTMLElement>('[data-review-item]')];
   const shown = new Set(fixed.map((li) => li.dataset.reviewItem ?? ''));
-  for (const item of dueItems(dayNo, log, source, shown)) {
+
+  /** 客户端补一条：补漏与到期错题都走这里，清空记录时要能整条撤走 */
+  function append(item: ReviewItem): void {
+    if (!list) return;
     const li = document.createElement('li');
     li.dataset.reviewItem = item.id;
-    li.dataset.reviewDue = ''; // 到期错题：清空 / 移除记录时要连它一起撤走
+    li.dataset.reviewDue = '';
     li.innerHTML = itemHtml(item);
     list.append(li);
+    shown.add(item.id);
   }
+
+  const fill = fillItem(log, source, shown);
+  if (fill) append(fill);
+  for (const item of dueItems(dayNo, log, source, shown)) append(item);
+
+  // 随堂默写要考的旧知识点跟着一起更新：补漏与到期错题都是客户端才算得出来的，
+  // 服务端注入的那份只有三个固定格（无 JS 时的兜底）
+  syncRecallPoints([...list.querySelectorAll<HTMLElement>('[data-review-item]')], source);
 
   for (const li of list.querySelectorAll<HTMLElement>('[data-review-item]')) {
     const id = li.dataset.reviewItem;

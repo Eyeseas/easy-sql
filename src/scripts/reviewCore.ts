@@ -18,8 +18,13 @@ export const ACTION_LABEL: Record<ReviewAction, string> = {
   explain: '口头解释',
 };
 
-/** 今天为什么出现：固定间隔的那一格（值即往回数的学习日数），或到期的错题 */
-export type ReviewOrigin = number | 'due';
+/**
+ * 今天为什么出现：
+ *   数字    固定间隔的那一格，值即往回数的学习日数（D+1 / D+3 / D+7）
+ *   'fill'  补漏格：还没复盘过的旧知识点
+ *   'due'   到期的错题
+ */
+export type ReviewOrigin = number | 'fill' | 'due';
 
 export interface ReviewItem {
   /** 稳定 id：来源学习日 + 素材类型 + 下标。课程数据不变时跨天稳定 */
@@ -116,18 +121,30 @@ export function reviewPlanFor(dayNo: number, days: readonly Day[]): ReviewItem[]
 
 /**
  * 已学过的那些天的复盘素材，注入给客户端。
- * 只带题面与答案、不带讲义正文，条数随学习进度增长——到期的错题可能来自任意
- * 一个过去的学习日，客户端手里没有课程数据，只能靠这份索引把它渲染出来。
+ * 只带题面与答案、不带讲义正文，条数随学习进度增长——到期的错题与补漏格都可能
+ * 取到任意一个过去学习日的任意一条知识点，客户端手里没有课程数据，只能靠这份
+ * 索引把它渲染出来。
  */
 export function reviewSourceFor(dayNo: number, days: readonly Day[]): ReviewSource {
   const source: ReviewSource = {};
   for (const d of days) {
     if (d.no >= dayNo) continue;
-    for (const m of [pickDrill(d, 0), pickLearn(d, 0)]) {
-      if (m) source[m.id] = m;
+    const drill = pickDrill(d, 0);
+    if (drill) source[drill.id] = drill;
+    // 知识点要收全：补漏格专挑第 2 条及以后的那些
+    for (let i = 0; i < d.learn.length; i += 1) {
+      const learn = pickLearn(d, i);
+      if (learn) source[learn.id] = learn;
     }
   }
   return source;
+}
+
+/** 拆开复盘项 id：`d{学习日号}-{素材类型}-{下标}`。认不出的返回 null */
+function idParts(id: string): { no: number; kind: string; idx: number } | null {
+  const m = /^d(\d+)-(drill|learn)-(\d+)$/.exec(id);
+  if (!m?.[1] || !m[2] || !m[3]) return null;
+  return { no: Number(m[1]), kind: m[2], idx: Number(m[3]) };
 }
 
 /* ---------- 复盘记录 ---------- */
@@ -261,6 +278,38 @@ export function dueIds(dayNo: number, log: ReviewLog): string[] {
     .filter(([, rec]) => rec.dueOn !== null && rec.dueOn <= dayNo)
     .sort(([aId, a], [bId, b]) => (a.dueOn ?? 0) - (b.dueOn ?? 0) || aId.localeCompare(bId))
     .map(([id]) => id);
+}
+
+/**
+ * 补漏格：所有已学知识点里，第一条还**没有任何判定记录**的（学习日号升序、
+ * 下标升序，先补最早欠下的）。三个固定间隔格一辈子只会取到每天的第 1 条，
+ * 第 2 条及以后全靠这一格捞回来。
+ *
+ * 「没判定过 = 没覆盖过」是刻意的：学员不点「记得 / 忘了」，这一格就停在同一
+ * 条上不往前走。判定是它前进的唯一燃料，不是缺陷。
+ *
+ * exclude 里的（当天固定格已经占了的）跳过，往后找下一条。全部判定过就返回
+ * null——那一格不出现。
+ */
+export function fillItem(
+  log: ReviewLog,
+  source: ReviewSource,
+  exclude: ReadonlySet<string> = new Set(),
+): ReviewItem | null {
+  const candidates = Object.values(source)
+    .filter((m) => m.action === 'explain')
+    .sort((a, b) => {
+      const pa = idParts(a.id);
+      const pb = idParts(b.id);
+      return (pa?.no ?? 0) - (pb?.no ?? 0) || (pa?.idx ?? 0) - (pb?.idx ?? 0);
+    });
+
+  for (const m of candidates) {
+    if (exclude.has(m.id)) continue;
+    if (m.id in log.items) continue;
+    return { ...m, origin: 'fill' };
+  }
+  return null;
 }
 
 /** 把一条从记录里彻底抹掉：不再排队，也不再出现在错题本里 */

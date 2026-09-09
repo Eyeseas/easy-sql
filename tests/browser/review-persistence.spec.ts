@@ -34,6 +34,31 @@ test('标「忘了」写进浏览器，刷新后还在，下一个学习日作�
   await expect(due).not.toHaveClass(/is-judged/);
 });
 
+test('补漏格：出一条没复盘过的旧知识点，判定后换下一条', async ({ page }) => {
+  await page.goto('/day/11');
+
+  const fill = page.locator('li[data-review-item]', { has: page.locator('.rv-origin.is-fill') });
+  await expect(fill).toHaveCount(1);
+  await expect(fill.locator('.rv-origin')).toHaveText('补漏');
+  await expect(fill.locator('.rv-act')).toHaveText('口头解释');
+
+  const firstId = await fill.getAttribute('data-review-item');
+  expect(firstId).toMatch(/^d\d+-learn-\d+$/);
+
+  // 不判定就不前进：刷新还是同一条
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(
+    page.locator('li[data-review-item]', { has: page.locator('.rv-origin.is-fill') }),
+  ).toHaveAttribute('data-review-item', firstId!);
+
+  // 判定之后换下一条
+  await fill.getByRole('button', { name: '记得' }).click();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  const next = page.locator('li[data-review-item]', { has: page.locator('.rv-origin.is-fill') });
+  await expect(next).toHaveCount(1);
+  expect(await next.getAttribute('data-review-item')).not.toBe(firstId);
+});
+
 test('错题本：标「忘了」后收进本子，移除后不再出现', async ({ page }) => {
   await page.goto('/day/11');
 

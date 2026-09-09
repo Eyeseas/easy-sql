@@ -5,6 +5,7 @@ import {
   applyVerdict,
   dueIds,
   dueItems,
+  fillItem,
   normalizeLog,
   reviewPlanFor,
   reviewSourceFor,
@@ -149,15 +150,18 @@ test('同一输入连续两次调用结果全等：取材确定性，不随机',
 
 /* ---------- 复盘记录 ---------- */
 
-test('素材索引只收已学过的天，每天两条（练第 1 题 + 学第 1 条）', () => {
+test('素材索引只收已学过的天：练第 1 题 + 全部知识点', () => {
   const source = reviewSourceFor(4, days);
   assert.deepEqual(Object.keys(source).sort(), [
     'd1-drill-0',
     'd1-learn-0',
+    'd1-learn-1',
     'd2-drill-0',
     'd2-learn-0',
+    'd2-learn-1',
     'd3-drill-0',
     'd3-learn-0',
+    'd3-learn-1',
   ]);
   assert.equal(source['d3-drill-0']?.prompt, 'D3 练习一');
 });
@@ -353,6 +357,94 @@ test('超出上限的到期项不销账：之后的学习日照样排队', () =>
     dueItems(21, log, reviewSourceFor(20, days)).map((x) => x.id),
     ['d6-drill-0', 'd7-drill-0', 'd8-drill-0'],
   );
+});
+
+/* ---------- 补漏格 ---------- */
+
+/** 每天 3 条知识点的课程，用来验证第 2 条及以后能不能被捞出来 */
+const rich: readonly Day[] = Array.from({ length: 12 }, (_, i) =>
+  day(i + 1, {
+    learn: [`D${i + 1} 知识点一`, `D${i + 1} 知识点二`, `D${i + 1} 知识点三`],
+  }),
+);
+
+test('素材索引收全每天的知识点，不再只收第 1 条', () => {
+  const source = reviewSourceFor(3, rich);
+  assert.deepEqual(Object.keys(source).sort(), [
+    'd1-drill-0',
+    'd1-learn-0',
+    'd1-learn-1',
+    'd1-learn-2',
+    'd2-drill-0',
+    'd2-learn-0',
+    'd2-learn-1',
+    'd2-learn-2',
+  ]);
+});
+
+test('补漏取第一条没有判定记录的知识点：学习日号升序、下标升序', () => {
+  const item = fillItem(EMPTY_LOG, reviewSourceFor(11, rich));
+  assert.ok(item);
+  assert.equal(item.origin, 'fill');
+  assert.equal(item.action, 'explain');
+  assert.equal(item.id, 'd1-learn-0');
+});
+
+test('判定过的知识点不再被补漏选中，一条条往后推', () => {
+  const source = reviewSourceFor(11, rich);
+  let log = applyVerdict(EMPTY_LOG, 'd1-learn-0', 11, 'known');
+  assert.equal(fillItem(log, source)?.id, 'd1-learn-1');
+
+  log = applyVerdict(log, 'd1-learn-1', 12, 'forgot');
+  assert.equal(fillItem(log, source)?.id, 'd1-learn-2');
+
+  log = applyVerdict(log, 'd1-learn-2', 13, 'known');
+  assert.equal(fillItem(log, source)?.id, 'd2-learn-0');
+});
+
+test('不判定就不前进：同一份记录反复取，永远是同一条', () => {
+  const source = reviewSourceFor(11, rich);
+  assert.equal(fillItem(EMPTY_LOG, source)?.id, fillItem(EMPTY_LOG, source)?.id);
+  // 换一天也一样——补漏不看今天是第几天，只看还欠什么
+  assert.equal(fillItem(EMPTY_LOG, reviewSourceFor(12, rich))?.id, 'd1-learn-0');
+});
+
+test('补漏能取到下标非 0 的知识点——这是这一格存在的理由', () => {
+  // 每天第 1 条都判定过了：固定间隔格能碰到的就这些
+  let log = EMPTY_LOG;
+  for (let n = 1; n <= 10; n += 1) log = applyVerdict(log, `d${n}-learn-0`, 11, 'known');
+
+  const item = fillItem(log, reviewSourceFor(11, rich));
+  assert.ok(item);
+  assert.equal(item.id, 'd1-learn-1');
+  assert.equal(item.prompt, 'D1 知识点二');
+});
+
+test('当天固定格已经占了的那条跳过，往后找下一条', () => {
+  const source = reviewSourceFor(11, rich);
+  const item = fillItem(EMPTY_LOG, source, new Set(['d1-learn-0']));
+  assert.equal(item?.id, 'd1-learn-1');
+});
+
+test('全部判定过之后补漏格不出现', () => {
+  const source = reviewSourceFor(11, rich);
+  let log = EMPTY_LOG;
+  for (const id of Object.keys(source)) log = applyVerdict(log, id, 11, 'known');
+  assert.equal(fillItem(log, source), null);
+});
+
+test('D01 没有已学过的天：补漏格不出现', () => {
+  assert.equal(fillItem(EMPTY_LOG, reviewSourceFor(1, rich)), null);
+});
+
+test('补漏只挑知识点，不挑练习题', () => {
+  const source = reviewSourceFor(11, rich);
+  let log = EMPTY_LOG;
+  for (const [id, m] of Object.entries(source)) {
+    if (m.action === 'explain') log = applyVerdict(log, id, 11, 'known');
+  }
+  // 练习题一条都没判定过，但补漏已经没得挑了
+  assert.equal(fillItem(log, source), null);
 });
 
 /* ---------- 错题本 ---------- */
