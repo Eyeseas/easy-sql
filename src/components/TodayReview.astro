@@ -54,6 +54,17 @@ const foldLabel = (action: ReviewItem['action']) => (action === 'explain' ? '易
       ))
     }
   </ol>
+
+  {/* 错题本：内容全在浏览器里，由 review.ts 填。没有错题时整块由脚本收起 */}
+  <details class="fold fold-label rv-book" data-review-book hidden>
+    <summary>错题本 <span class="rv-book-count" data-review-book-count></span></summary>
+    <div data-review-book-list></div>
+    <div class="rv-book-foot">
+      <button class="btn" data-review-book-copy type="button">复制为 Markdown</button>
+      <button class="btn" data-review-book-clear type="button">清空复盘记录</button>
+      <span class="rv-said" data-review-book-status></span>
+    </div>
+  </details>
 </section>
 
 <style>

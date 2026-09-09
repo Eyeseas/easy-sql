@@ -9,6 +9,9 @@ import {
   reviewPlanFor,
   reviewSourceFor,
   isMistake,
+  mistakeBook,
+  mistakesMarkdown,
+  removeItem,
   DUE_LIMIT,
   verdictOn,
 } from '../src/scripts/reviewCore.ts';
@@ -350,6 +353,77 @@ test('超出上限的到期项不销账：之后的学习日照样排队', () =>
     dueItems(21, log, reviewSourceFor(20, days)).map((x) => x.id),
     ['d6-drill-0', 'd7-drill-0', 'd8-drill-0'],
   );
+});
+
+/* ---------- 错题本 ---------- */
+
+test('错题本只收忘过的，按来源学习日排，带忘过次数与下次到期', () => {
+  let log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  log = applyVerdict(log, 'd4-learn-0', 11, 'forgot');
+  log = applyVerdict(log, 'd8-drill-0', 11, 'known'); // 顺手答对的，不进错题本
+
+  const book = mistakeBook(log, reviewSourceFor(12, days));
+  assert.deepEqual(
+    book.map((e) => [e.material.id, e.forgot, e.dueOn, e.graduated]),
+    [
+      ['d4-learn-0', 1, 12, false],
+      ['d10-drill-0', 1, 12, false],
+    ],
+  );
+});
+
+test('毕业的条目留在错题本里，标成已掌握', () => {
+  const log = judge([
+    [11, 'forgot'],
+    [12, 'known'],
+    [15, 'known'],
+    [22, 'known'],
+  ]);
+  const [entry] = mistakeBook(log, reviewSourceFor(12, days));
+  assert.ok(entry);
+  assert.equal(entry.graduated, true);
+  assert.equal(entry.dueOn, null);
+  assert.equal(entry.forgot, 1);
+});
+
+test('移除一条：错题本里没有了，也不再排队', () => {
+  let log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  log = removeItem(log, 'd10-drill-0');
+  assert.deepEqual(mistakeBook(log, reviewSourceFor(12, days)), []);
+  assert.deepEqual(dueIds(99, log), []);
+});
+
+test('移除不存在的条目：记录原样返回', () => {
+  const log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  assert.equal(removeItem(log, '不存在'), log);
+});
+
+test('导出 markdown：按来源学习日分节，带动作、忘过次数、题面与参考答案', () => {
+  let log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  log = applyVerdict(log, 'd4-learn-0', 11, 'forgot');
+
+  const md = mistakesMarkdown(mistakeBook(log, reviewSourceFor(12, days)));
+  assert.match(md, /^# 错题本/);
+  assert.match(md, /共 2 条/);
+  assert.match(md, /## D04 第 4 天/);
+  assert.match(md, /## D10 第 10 天/);
+  assert.match(md, /### 重做 · 忘过 1 次 · 下次 D12/);
+  assert.match(md, /D10 练习一/);
+  assert.match(md, /```sql\nselect 10;\n```/);
+  // D04 取的是「学」栏第 1 条，一行式字符串没有参考答案
+  assert.match(md, /### 口头解释 · 忘过 1 次 · 下次 D12/);
+});
+
+test('导出 markdown：题面里的内联标签清掉，别把 HTML 贴进 mistakes.md', () => {
+  const tagged = [day(10, { drill: ['用 <code>count(*)</code> 数一下'] }), day(11)];
+  const log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  const md = mistakesMarkdown(mistakeBook(log, reviewSourceFor(11, tagged)));
+  assert.match(md, /用 count\(\*\) 数一下/);
+  assert.equal(md.includes('<code>'), false);
+});
+
+test('导出 markdown：空错题本也给一份能读的文件', () => {
+  assert.equal(mistakesMarkdown([]), '# 错题本\n\n还没有错题。\n');
 });
 
 test('固定格占过的不算进上限之外，也不重复出', () => {

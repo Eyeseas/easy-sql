@@ -9,10 +9,15 @@
 import { readJSON, writeJSON } from './storage';
 import {
   ACTION_LABEL,
+  EMPTY_LOG,
   applyVerdict,
   dueItems,
+  mistakeBook,
+  mistakesMarkdown,
   normalizeLog,
+  removeItem,
   verdictOn,
+  type MistakeEntry,
   type ReviewItem,
   type ReviewLog,
   type ReviewSource,
@@ -76,6 +81,45 @@ function itemHtml(item: ReviewItem): string {
     </div>`;
 }
 
+/** 错题本一条的状态：已掌握，还是下次什么时候来 */
+function stateText(e: MistakeEntry): string {
+  return e.graduated ? '已掌握' : `下次 D${String(e.dueOn).padStart(2, '0')}`;
+}
+
+/** 错题本正文：按来源学习日分节 */
+function bookHtml(entries: readonly MistakeEntry[]): string {
+  const byDay = new Map<number, MistakeEntry[]>();
+  for (const e of entries) {
+    const list = byDay.get(e.material.fromDay) ?? [];
+    list.push(e);
+    byDay.set(e.material.fromDay, list);
+  }
+
+  return [...byDay]
+    .map(([fromDay, list]) => {
+      const dd = String(fromDay).padStart(2, '0');
+      const head = escapeHtml(list[0]?.material.fromTitle ?? '');
+      const rows = list
+        .map(
+          (e) => `
+        <div class="rv-entry${e.graduated ? ' is-graduated' : ''}">
+          <span class="rv-act">${ACTION_LABEL[e.material.action]}</span>
+          <span class="rv-text">${e.material.prompt}</span>
+          <span class="rv-state">忘过 ${e.forgot} 次 · ${stateText(e)}</span>
+          <button
+            class="rv-drop"
+            type="button"
+            title="从错题本移除"
+            data-book-drop="${escapeHtml(e.material.id)}"
+          >✕</button>
+        </div>`,
+        )
+        .join('');
+      return `<section class="rv-day"><h4>D${dd} ${head}</h4>${rows}</section>`;
+    })
+    .join('');
+}
+
 /** 把某一条已有的判定画到界面上 */
 function paint(li: HTMLElement, verdict: ReviewVerdict | null): void {
   li.classList.toggle('is-judged', verdict !== null);
@@ -94,20 +138,19 @@ export function initReview(): void {
   const dayNo = Number(section.dataset.reviewDay);
   if (!Number.isFinite(dayNo)) return;
 
+  const source = loadSource();
   let log = loadLog();
 
   // 固定格已经占了的不重复出；到期的错题补在后面
   const fixed = [...list.querySelectorAll<HTMLElement>('[data-review-item]')];
   const shown = new Set(fixed.map((li) => li.dataset.reviewItem ?? ''));
-  for (const item of dueItems(dayNo, log, loadSource(), shown)) {
+  for (const item of dueItems(dayNo, log, source, shown)) {
     const li = document.createElement('li');
     li.dataset.reviewItem = item.id;
+    li.dataset.reviewDue = ''; // 到期错题：清空 / 移除记录时要连它一起撤走
     li.innerHTML = itemHtml(item);
     list.append(li);
   }
-
-  // 有到期错题时，固定格为空的天（如 D01）也要把整块露出来
-  if (list.children.length > 0) section.hidden = false;
 
   for (const li of list.querySelectorAll<HTMLElement>('[data-review-item]')) {
     const id = li.dataset.reviewItem;
@@ -120,7 +163,68 @@ export function initReview(): void {
         log = applyVerdict(log, id, dayNo, verdict);
         writeJSON(KEY, log);
         paint(li, verdict);
+        renderBook();
       });
     }
   }
+
+  /* ---------- 错题本 ---------- */
+
+  const book = section.querySelector<HTMLElement>('[data-review-book]');
+  const bookList = section.querySelector<HTMLElement>('[data-review-book-list]');
+  const bookCount = section.querySelector<HTMLElement>('[data-review-book-count]');
+  const status = section.querySelector<HTMLElement>('[data-review-book-status]');
+
+  /** 记录变了就重画一遍：条数、分节正文、逐条移除按钮 */
+  function renderBook(): void {
+    if (!book || !bookList) return;
+    const entries = mistakeBook(log, source);
+
+    book.hidden = entries.length === 0;
+    if (bookCount) bookCount.textContent = entries.length > 0 ? `${entries.length} 条` : '';
+    bookList.innerHTML = bookHtml(entries);
+
+    for (const btn of bookList.querySelectorAll<HTMLButtonElement>('[data-book-drop]')) {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.bookDrop;
+        if (!id) return;
+        log = removeItem(log, id);
+        writeJSON(KEY, log);
+        if (status) status.textContent = '已移除 1 条';
+        renderBook();
+        // 已经排在今天列表里的那一条也一并撤走，免得移除了还留在眼前
+        section?.querySelector(`[data-review-item="${id}"][data-review-due]`)?.remove();
+      });
+    }
+
+    reveal();
+  }
+
+  /** 有内容才露出整块：固定格、到期错题、错题本，三者都空就继续藏着 */
+  function reveal(): void {
+    if (!section || !list) return;
+    section.hidden = list.children.length === 0 && (book?.hidden ?? true);
+  }
+
+  section
+    .querySelector<HTMLButtonElement>('[data-review-book-copy]')
+    ?.addEventListener('click', () => {
+      void navigator.clipboard?.writeText(mistakesMarkdown(mistakeBook(log, source)));
+      if (status) status.textContent = '已复制，贴进 mistakes.md 即可';
+    });
+
+  section
+    .querySelector<HTMLButtonElement>('[data-review-book-clear]')
+    ?.addEventListener('click', () => {
+      if (!window.confirm('清空错题本与全部复盘记录？此操作不可撤销（不影响 56 天完成进度）。'))
+        return;
+      log = EMPTY_LOG;
+      writeJSON(KEY, log);
+      for (const li of list.querySelectorAll('[data-review-due]')) li.remove();
+      for (const li of list.querySelectorAll<HTMLElement>('[data-review-item]')) paint(li, null);
+      if (status) status.textContent = '已清空';
+      renderBook();
+    });
+
+  renderBook();
 }

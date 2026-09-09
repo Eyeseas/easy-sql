@@ -34,6 +34,33 @@ test('标「忘了」写进浏览器，刷新后还在，下一个学习日作�
   await expect(due).not.toHaveClass(/is-judged/);
 });
 
+test('错题本：标「忘了」后收进本子，移除后不再出现', async ({ page }) => {
+  await page.goto('/day/11');
+
+  const book = page.locator('[data-review-book]');
+  await expect(book).toBeHidden();
+
+  const first = page.locator(ITEM).first();
+  const itemId = await first.getAttribute('data-review-item');
+  await first.getByRole('button', { name: '忘了' }).click();
+
+  await expect(book).toBeVisible();
+  await expect(page.locator('[data-review-book-count]')).toHaveText('1 条');
+  await book.locator('summary').click(); // 展开
+  const entry = page.locator('.rv-entry');
+  await expect(entry).toHaveCount(1);
+  await expect(entry).toContainText('忘过 1 次');
+  await expect(entry).toContainText('下次 D12');
+
+  await page.locator(`[data-book-drop="${itemId}"]`).click();
+  await expect(page.locator('.rv-entry')).toHaveCount(0);
+  await expect(book).toBeHidden();
+
+  // 移除之后不再排队：第二天不该冒出来
+  await page.goto('/day/12');
+  await expect(page.locator(`li[data-review-item="${itemId}"]`)).toHaveCount(0);
+});
+
 test('标「记得」写进浏览器，且不会作为错题再来', async ({ page }) => {
   await page.goto('/day/11');
 

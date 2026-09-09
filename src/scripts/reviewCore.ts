@@ -7,6 +7,7 @@
  * 跳过几天不学不该堆积复盘欠债。取材规则确定性，同一份输入必得同一份输出。
  */
 import type { Day, DrillAnswer } from '../types/curriculum';
+import { stripTags } from '../utils/promptText';
 
 /** 复盘动作：这一条要学员做什么 */
 export type ReviewAction = 'recite' | 'redo' | 'explain';
@@ -260,6 +261,79 @@ export function dueIds(dayNo: number, log: ReviewLog): string[] {
     .filter(([, rec]) => rec.dueOn !== null && rec.dueOn <= dayNo)
     .sort(([aId, a], [bId, b]) => (a.dueOn ?? 0) - (b.dueOn ?? 0) || aId.localeCompare(bId))
     .map(([id]) => id);
+}
+
+/** 把一条从记录里彻底抹掉：不再排队，也不再出现在错题本里 */
+export function removeItem(log: ReviewLog, id: string): ReviewLog {
+  if (!(id in log.items)) return log;
+  const items = { ...log.items };
+  delete items[id];
+  return { version: REVIEW_LOG_VERSION, items };
+}
+
+/* ---------- 错题本 ---------- */
+
+export interface MistakeEntry {
+  material: ReviewMaterial;
+  /** 忘过几次 */
+  forgot: number;
+  /** 当前连续答对次数 */
+  streak: number;
+  /** 下次到期的学习日号；已掌握为 null */
+  dueOn: number | null;
+  /** 连对够次数、暂时不再排队 */
+  graduated: boolean;
+}
+
+/**
+ * 错题本：忘过至少一次的全部条目，按来源学习日排。
+ * 素材索引里查不到的（课程内容改过之后的旧记录）静默略过。
+ */
+export function mistakeBook(log: ReviewLog, source: ReviewSource): MistakeEntry[] {
+  const entries: MistakeEntry[] = [];
+  for (const [id, rec] of Object.entries(log.items)) {
+    if (!isMistake(rec)) continue;
+    const material = source[id];
+    if (!material) continue;
+    entries.push({
+      material,
+      forgot: rec.history.filter((h) => h.verdict === 'forgot').length,
+      streak: rec.streak,
+      dueOn: rec.dueOn,
+      graduated: rec.dueOn === null,
+    });
+  }
+  return entries.sort(
+    (a, b) => a.material.fromDay - b.material.fromDay || a.material.id.localeCompare(b.material.id),
+  );
+}
+
+/**
+ * 错题本导出成 markdown，按来源学习日分节，贴进交付物 mistakes.md 即可。
+ * 单向导出：脱离站点也能读，不打算再导回来。
+ */
+export function mistakesMarkdown(entries: readonly MistakeEntry[]): string {
+  if (entries.length === 0) return '# 错题本\n\n还没有错题。\n';
+
+  const lines = [`# 错题本`, '', `共 ${entries.length} 条，导出自「八周 SQL 冲刺计划」。`];
+  let lastDay = -1;
+
+  for (const e of entries) {
+    const { material: m } = e;
+    if (m.fromDay !== lastDay) {
+      lines.push('', `## D${String(m.fromDay).padStart(2, '0')} ${stripTags(m.fromTitle)}`);
+      lastDay = m.fromDay;
+    }
+
+    const state = e.graduated ? '已掌握' : `下次 D${String(e.dueOn).padStart(2, '0')}`;
+    lines.push('', `### ${ACTION_LABEL[m.action]} · 忘过 ${e.forgot} 次 · ${state}`);
+    lines.push('', stripTags(m.prompt));
+
+    if (m.answer?.note) lines.push('', `**要点**：${stripTags(m.answer.note)}`);
+    if (m.answer?.sql) lines.push('', '```sql', m.answer.sql, '```');
+  }
+
+  return `${lines.join('\n')}\n`;
 }
 
 /**

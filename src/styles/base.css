@@ -560,6 +560,99 @@ tr:last-child td {
   color: var(--ink-3);
 }
 
+/* ---------- 错题本（内容由 review.ts 注入） ---------- */
+
+.rv-book {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.rv-book[hidden] {
+  display: none;
+}
+
+.rv-book-count {
+  color: var(--ink-3);
+}
+
+/* 按来源学习日分节：一节一天，节内每条一行 */
+.rv-day {
+  margin-top: 14px;
+}
+
+.rv-day > h4 {
+  font-family: var(--f-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  margin: 0 0 6px;
+}
+
+.rv-entry {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--line-soft);
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.rv-entry.is-graduated {
+  opacity: 0.55;
+}
+
+.rv-entry .rv-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.rv-state {
+  flex: none;
+  font-family: var(--f-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.rv-entry.is-graduated .rv-state {
+  color: var(--green);
+}
+
+/* 移除是逐条的破坏性操作，做成克制的叉号而不是一排按钮 */
+.rv-drop {
+  flex: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0 4px;
+  color: var(--ink-3);
+  font-family: var(--f-mono);
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.rv-drop:hover {
+  color: var(--danger);
+}
+
+.rv-book-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.rv-book-foot .btn {
+  font-size: 0.76rem;
+  padding: 4px 12px;
+}
+
 /* ---------- AI 补充练习（由 generator.ts 用 innerHTML 注入，无法用组件作用域样式） ---------- */
 
 /* minmax(0, 1fr) + min-width: 0：参考答案里的 SQL 块不得撑宽主栏，同 DayFocus */
