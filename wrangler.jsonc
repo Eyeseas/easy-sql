@@ -11,9 +11,9 @@
   "assets": {
     // 56 个预渲染页面全在这里，由 CF 免费不限量分发；_worker.js 不会被当静态资源
     "directory": "./dist",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
   },
   "observability": {
-    "enabled": true
-  }
+    "enabled": true,
+  },
 }

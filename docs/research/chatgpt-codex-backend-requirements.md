@@ -6,16 +6,16 @@
 
 ## 结论（直接证据）
 
-| 字段/形状 | `/backend-api/codex/responses` 可确认的要求 | 证据边界 |
-|---|---|---|
-| `store` | 必须是布尔值 `false`。`true` 会得到 `{"detail":"Store must be set to false"}`。 | PR #39197 的正文明确写出该响应；当前官方 Codex 客户端也固定发送 `store: false`。 |
-| `stream` | 必须是布尔值 `true`。`false`/未按流式请求会得到 `{"detail":"Stream must be set to true"}`。 | 同上。这里的 `true` 是后端硬要求，不只是客户端偏好。 |
-| `instructions` | 必须是**顶层字段**，且值必须非空。缺失或空值会得到 `400 {"detail":"Instructions are required"}`；`undefined` 经 `JSON.stringify` 会直接丢字段。 | pi issue #4184 明确记录缺失/空值；当前 pi 用 `context.systemPrompt || "You are a helpful assistant."`。 |
-| `input` | 使用 Responses API 的 `input` 数组，而不是 Chat Completions 的 `messages`。元素是 Responses input item，例如 `type: "message"` 加 `role` 与 `content`，以及 function/custom tool output 等。 | 官方 Codex 的 `ResponsesApiRequest` 定义为 `input: Vec<ResponseItem>`；官方源代码的 `ResponseInputItem` 也定义了这些 item 形状。官方 issue #14743 另记录了兼容网关对 `messages` 的 `Unsupported parameter: messages`，但那是自定义 provider 场景，不能单独当作 ChatGPT 后端错误。 |
-| system prompt | 对标准 Responses/Codex 路径，应从 `input` 中拿出来，放入顶层 `instructions`。当前 pi 明确调用 `convertResponsesMessages(..., { includeSystemPrompt: false })`，再单独填顶层 `instructions`。 | pi PR #5859、当前 pi 源码、官方 Codex `build_responses_request()` 一致支持这一点。 |
-| `developer` input item | **没有找到允许把任意 developer message 放入标准 `/backend-api/codex/responses` 的明确后端契约，也没有找到该后端明确拒绝普通 `type:"message", role:"developer"` 的证据。** 不应把这两种说法混为已证实事实。官方 Codex 的 Responses-Lite 分支确实会把工具/自定义 instructions 放成 developer input item，但那是另一条带 Lite 语义的内部路径。 | 见官方 `build_responses_request()` 的标准分支与 Responses-Lite 分支；见官方 issue #38355。对普通 system prompt，已明确应提升到顶层 `instructions`。 |
-| `max_output_tokens` | 必须省略。后端响应为 `{"detail":"Unsupported parameter: max_output_tokens"}`。 | PR #39197 正文及其 diff 的注释/测试；当前 pi 的 Codex body 根本不写该字段。 |
-| 其它字段 | 在允许的来源中，没有找到另一个可泛化为该 endpoint 硬拒绝的字段。`model`、`tool_choice`、`reasoning`、`text`、`include`、`prompt_cache_key`、`parallel_tool_calls`、`service_tier` 等在官方客户端或当前 pi 请求体中仍被发送；不能凭猜测删掉。 | `reasoning.summary`、`prompt_cache_retention`、`additional_tools` 等确有其它 issue 报告过错误，但分别是特定模型或自定义/Responses-Lite provider 场景，见下文“不要泛化”。 |
+| 字段/形状              | `/backend-api/codex/responses` 可确认的要求                                                                                                                                                                                                                                                                                                 | 证据边界                                                                                                                                                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `store`                | 必须是布尔值 `false`。`true` 会得到 `{"detail":"Store must be set to false"}`。                                                                                                                                                                                                                                                             | PR #39197 的正文明确写出该响应；当前官方 Codex 客户端也固定发送 `store: false`。                                                                                                                                                                                                  |
+| `stream`               | 必须是布尔值 `true`。`false`/未按流式请求会得到 `{"detail":"Stream must be set to true"}`。                                                                                                                                                                                                                                                 | 同上。这里的 `true` 是后端硬要求，不只是客户端偏好。                                                                                                                                                                                                                              |
+| `instructions`         | 必须是**顶层字段**，且值必须非空。缺失或空值会得到 `400 {"detail":"Instructions are required"}`；`undefined` 经 `JSON.stringify` 会直接丢字段。                                                                                                                                                                                             | pi issue #4184 明确记录缺失/空值；当前 pi 用 `context.systemPrompt                                                                                                                                                                                                                |     | "You are a helpful assistant."`。 |
+| `input`                | 使用 Responses API 的 `input` 数组，而不是 Chat Completions 的 `messages`。元素是 Responses input item，例如 `type: "message"` 加 `role` 与 `content`，以及 function/custom tool output 等。                                                                                                                                                | 官方 Codex 的 `ResponsesApiRequest` 定义为 `input: Vec<ResponseItem>`；官方源代码的 `ResponseInputItem` 也定义了这些 item 形状。官方 issue #14743 另记录了兼容网关对 `messages` 的 `Unsupported parameter: messages`，但那是自定义 provider 场景，不能单独当作 ChatGPT 后端错误。 |
+| system prompt          | 对标准 Responses/Codex 路径，应从 `input` 中拿出来，放入顶层 `instructions`。当前 pi 明确调用 `convertResponsesMessages(..., { includeSystemPrompt: false })`，再单独填顶层 `instructions`。                                                                                                                                                | pi PR #5859、当前 pi 源码、官方 Codex `build_responses_request()` 一致支持这一点。                                                                                                                                                                                                |
+| `developer` input item | **没有找到允许把任意 developer message 放入标准 `/backend-api/codex/responses` 的明确后端契约，也没有找到该后端明确拒绝普通 `type:"message", role:"developer"` 的证据。** 不应把这两种说法混为已证实事实。官方 Codex 的 Responses-Lite 分支确实会把工具/自定义 instructions 放成 developer input item，但那是另一条带 Lite 语义的内部路径。 | 见官方 `build_responses_request()` 的标准分支与 Responses-Lite 分支；见官方 issue #38355。对普通 system prompt，已明确应提升到顶层 `instructions`。                                                                                                                               |
+| `max_output_tokens`    | 必须省略。后端响应为 `{"detail":"Unsupported parameter: max_output_tokens"}`。                                                                                                                                                                                                                                                              | PR #39197 正文及其 diff 的注释/测试；当前 pi 的 Codex body 根本不写该字段。                                                                                                                                                                                                       |
+| 其它字段               | 在允许的来源中，没有找到另一个可泛化为该 endpoint 硬拒绝的字段。`model`、`tool_choice`、`reasoning`、`text`、`include`、`prompt_cache_key`、`parallel_tool_calls`、`service_tier` 等在官方客户端或当前 pi 请求体中仍被发送；不能凭猜测删掉。                                                                                                | `reasoning.summary`、`prompt_cache_retention`、`additional_tools` 等确有其它 issue 报告过错误，但分别是特定模型或自定义/Responses-Lite provider 场景，见下文“不要泛化”。                                                                                                          |
 
 ## PR #39197：准确的 body rewrite
 
@@ -30,35 +30,35 @@ PR 有两个 commit：
 
 ```ts
 function rewriteCodexRequestBody(body) {
-  if (body === undefined || body === null) return undefined
+  if (body === undefined || body === null) return undefined;
 
   // string、ArrayBuffer、ArrayBufferView、Buffer 转成文本；
   // 其它 BodyInit（例如 Blob/FormData/URLSearchParams）原样返回。
-  const text = bodyToTextIfSupported(body)
-  if (text === undefined) return body
+  const text = bodyToTextIfSupported(body);
+  if (text === undefined) return body;
 
-  let parsed
+  let parsed;
   try {
-    parsed = JSON.parse(text)
+    parsed = JSON.parse(text);
   } catch {
-    return body
+    return body;
   }
-  if (typeof parsed !== "object" || parsed === null) return body
+  if (typeof parsed !== 'object' || parsed === null) return body;
 
-  parsed.store = false
-  parsed.stream = true
-  delete parsed.max_output_tokens
-  return JSON.stringify(parsed)
+  parsed.store = false;
+  parsed.stream = true;
+  delete parsed.max_output_tokens;
+  return JSON.stringify(parsed);
 }
 ```
 
 实际 diff 中的关键语句是：
 
 ```ts
-json.store = false
-json.stream = true
-delete json.max_output_tokens
-return JSON.stringify(json)
+json.store = false;
+json.stream = true;
+delete json.max_output_tokens;
+return JSON.stringify(json);
 ```
 
 因此，**它只改这三个方面**：强制 `store: false`、强制 `stream: true`、删除 `max_output_tokens`。它不添加或修复 `instructions`，不改变 `input`，也不改变其它字段。非 JSON body、无法解析的字符串、以及非字符串/ArrayBuffer 类 body 保持不变；数组 JSON 实际序列化后也不会出现这些新对象属性，PR 测试将其视为不变。
@@ -144,9 +144,7 @@ pi 的 [PR #5859](https://github.com/earendil-works/pi/pull/5859) 明确写道�
     {
       "type": "message",
       "role": "user",
-      "content": [
-        { "type": "input_text", "text": "..." }
-      ]
+      "content": [{ "type": "input_text", "text": "..." }]
     }
   ]
 }

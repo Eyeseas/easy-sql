@@ -97,11 +97,13 @@ export function dataFactsForDay(no: number): string {
     '- orders.status：1=待支付，2=已支付，3=已取消，约 1% 是 NULL（脏数据）；total_amount 多在 20~2000 元，约 0.2% 为负（脏数据）；paid_at 只有已支付单才有，其中约 20 单比 created_at 还早（脏数据）。',
   ];
   if (live.has('users'))
-    lines.push('- users.city 只有北京/上海/广州/深圳/杭州/成都六个值，约 2% 是 NULL（口径练习素材）。');
+    lines.push(
+      '- users.city 只有北京/上海/广州/深圳/杭州/成都六个值，约 2% 是 NULL（口径练习素材）。',
+    );
   if (live.has('payments')) lines.push('- payments 只对应已支付的订单（status = 2）。');
   const volumes = tablesForDay(no)
     .filter((t) => t.rows)
-    .map((t) => `${t.name} ${fast ? t.rowsAfterD36 ?? t.rows : t.rows}`)
+    .map((t) => `${t.name} ${fast ? (t.rowsAfterD36 ?? t.rows) : t.rows}`)
     .join('，');
   lines.push(
     `- 行数量级${fast ? '（D36「时间快进」后的量级）' : ''}：${volumes}。出题别跟这些量级打架（比如别假设只有几十行）。`,
