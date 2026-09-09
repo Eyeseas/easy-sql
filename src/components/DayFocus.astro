@@ -89,6 +89,23 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
   </div>
 
   <div class="gen" data-exercises={day.no}></div>
+
+  {
+    /* 随堂默写：把当天知识点与今日复盘里的旧知识点混在同一道题里。
+       没有复盘项的天（D01–D03）不出这个入口——那时它退化成普通出题 */
+    reviewItems.length > 0 && (
+      <>
+        <div class="f-tools">
+          <button class="btn" data-recall={day.no}>
+            随堂默写
+          </button>
+          <span class="gen-status" data-recall-status={day.no} />
+        </div>
+
+        <div class="gen" data-recall-list={day.no} />
+      </>
+    )
+  }
 </article>
 
 <style>

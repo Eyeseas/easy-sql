@@ -170,6 +170,57 @@ ${day.drill.map((x, i) => `${i + 1}. ${stripTags(x)}`).join('\n')}${
 以 JSON 输出：{"exercises": [{"task": "...", "hint": "...", "referenceSql": "...", "checkpoint": "..."}]}，共 ${count} 题。`;
 }
 
+/* ---------- 随堂默写 ---------- */
+
+/**
+ * 要一起考的旧知识点：来自「今日复盘」那几格对应的学习日。
+ * 只带学习日号、标题与命中的那一条，不带讲义正文——注入页面的东西要小。
+ */
+export interface RecallPoint {
+  no: number;
+  title: string;
+  /** 命中的那一条知识点 / 题面，已清掉内联标签 */
+  point: string;
+}
+
+export const RECALL_SYSTEM = `${SYSTEM}
+
+补充要求（这次是「随堂默写」）：
+- 每道题都要同时用到当天的知识点和「要一起考的旧知识点」里的内容，两边在同一条 SQL 里碰上，不是一道新题加一道旧题。
+- 旧知识点正是学员今天该复盘、已经开始忘的东西，借这道题把它捞回来。
+- 别把旧知识点的原题照抄一遍，换业务角度、换表组合。`;
+
+/** 随堂默写的提示词。导出只为离线检查 / 调试，运行时只被本文件用 */
+export function buildRecallPrompt(
+  day: GenContextDay,
+  points: readonly RecallPoint[],
+  count: number,
+  priorTasks: readonly string[] = [],
+): string {
+  return `练习库表结构（截至这一天已上线的表）：
+${schemaForPrompt(day.no)}
+
+${dataFactsForDay(day.no)}
+
+当前进度：第 ${day.weekNo} 周《${day.weekTitle}》，第 ${day.no} 天《${day.title}》。${day.brief ? `\n当天的业务剧情：${stripTags(day.brief)}` : ''}${day.covered ? `\n学员已学范围（只能用这些之内的知识出题）：${day.covered}` : ''}
+
+这一天要掌握的知识点：
+${day.learn.map((x) => `- ${learnForPrompt(x)}`).join('\n')}
+
+要一起考的旧知识点（学员今天该复盘的，必须和当天知识点混在同一道题里）：
+${points.map((p) => `- 第 ${p.no} 天《${stripTags(p.title)}》：${p.point}`).join('\n')}
+
+这一天已有的练习任务（不要重复这些题目和场景）：
+${day.drill.map((x, i) => `${i + 1}. ${stripTags(x)}`).join('\n')}${
+    priorTasks.length > 0
+      ? `\n\n之前生成过、学员已经做过的随堂默写（也不要重复）：\n${priorTasks.map((x, i) => `${i + 1}. ${stripTags(x)}`).join('\n')}`
+      : ''
+  }
+
+请出 ${count} 道随堂默写题，每道都要新旧知识点同时用上，难度与已有任务相当或略高。
+以 JSON 输出：{"exercises": [{"task": "...", "hint": "...", "referenceSql": "...", "checkpoint": "..."}]}，共 ${count} 题。`;
+}
+
 /* ---------- 调服务端代理 ---------- */
 
 /**
@@ -346,5 +397,21 @@ export async function generateExercises(
 
   const user = buildPrompt(day, count, priorTasks);
   const text = await callViaProxy(cfg, SYSTEM, user, onProgress);
+  return parseExercises(text);
+}
+
+/** 随堂默写：与出题同一条管道，只换系统提示词与用户提示词 */
+export async function generateRecall(
+  day: GenContextDay,
+  points: readonly RecallPoint[],
+  count: number,
+  priorTasks: readonly string[] = [],
+  onProgress?: (chars: number) => void,
+): Promise<Exercise[]> {
+  const cfg = loadConfig();
+  if (!cfg.apiKey.trim()) throw new Error('没有配置 API key，先点右上「AI 设置」');
+
+  const user = buildRecallPrompt(day, points, count, priorTasks);
+  const text = await callViaProxy(cfg, RECALL_SYSTEM, user, onProgress);
   return parseExercises(text);
 }

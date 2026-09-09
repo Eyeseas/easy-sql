@@ -5,8 +5,10 @@ import WeekRail from '../../components/WeekRail.astro';
 import DayFocus from '../../components/DayFocus.astro';
 import TimerWidget from '../../components/TimerWidget.astro';
 import QaIsland from '../../qa/QaIsland';
-import { curriculum, allDays, findDay, coveredForDay } from '../../data';
+import { curriculum, allDays, findDay, coveredForDay, reviewPlanForDay } from '../../data';
 import { reviewSourceFor } from '../../scripts/reviewCore';
+import { stripTags } from '../../utils/promptText';
+import type { RecallPoint } from '../../scripts/llm';
 import { tablesForDay } from '../../data/schema';
 import { site } from '../../data/meta';
 import type { GenContextDay } from '../../scripts/llm';
@@ -38,6 +40,12 @@ const qaDay: GenContextDay = {
   covered: coveredForDay(day.no),
 };
 const genContext = [qaDay];
+// 随堂默写要一起考的旧知识点：今日复盘那几格对应的学习日，只带号、标题与命中的那一条
+const recallPoints: RecallPoint[] = reviewPlanForDay(day.no).map((it) => ({
+  no: it.fromDay,
+  title: it.fromTitle,
+  point: stripTags(it.prompt),
+}));
 // D01 只建 orders 一张表（其余的随业务逐周上线），结构直接放在这一页，不用跳回总览
 const schemaLines = tablesForDay(day.no)
   .map((t) => `${t.name}(${t.columns})${t.note ? `  -- ${t.note}` : ''}`)
@@ -130,6 +138,13 @@ const schemaLines = tablesForDay(day.no)
     type="application/json"
     id="review-source"
     set:html={JSON.stringify(reviewSourceFor(day.no, allDays))}
+    is:inline
+  />
+
+  <script
+    type="application/json"
+    id="recall-points"
+    set:html={JSON.stringify(recallPoints)}
     is:inline
   />
 </Layout>
