@@ -156,8 +156,28 @@ export interface ReviewLog {
 
 export const EMPTY_LOG: ReviewLog = { version: REVIEW_LOG_VERSION, items: {} };
 
-/** 标「忘了」之后隔几个学习日再来 */
-const FORGOT_STEP = 1;
+/**
+ * 间隔阶梯：标「忘了」掉回第一档，之后每答对一次往上走一档。
+ * 单位是学习日，不是日历天。
+ */
+export const LADDER = [1, 3, 7] as const;
+
+/** 连续答对几次就毕业，不再排队 */
+export const GRADUATE_AT = LADDER.length;
+
+/** 每天最多渲染几条到期错题；超出的顺延到之后的学习日（固定格不占这个额度） */
+export const DUE_LIMIT = 5;
+
+/** 这一条还在排队吗（在错题本里等下一次到期） */
+function queued(rec: ReviewRecord | undefined): boolean {
+  return rec !== undefined && rec.dueOn !== null;
+}
+
+/** 答对一次之后下次什么时候来；已经走完阶梯就毕业（null） */
+function nextDue(dayNo: number, streak: number): number | null {
+  const step = LADDER[streak];
+  return step === undefined ? null : dayNo + step;
+}
 
 function isVerdict(x: unknown): x is ReviewVerdict {
   return x === 'known' || x === 'forgot';
@@ -193,7 +213,13 @@ export function normalizeLog(raw: unknown): ReviewLog {
   return { version: REVIEW_LOG_VERSION, items };
 }
 
-/** 记一次判定。纯函数：返回新记录，不改入参 */
+/**
+ * 记一次判定。纯函数：返回新记录，不改入参。
+ *
+ * 标「忘了」：进错题本（毕业过的重新进来），间隔掉回第一档。
+ * 标「记得」：还在排队的往上走一档，走完阶梯就毕业；本来就不在排队的
+ * （固定格里顺手答对的）不因此被拉进错题本。
+ */
 export function applyVerdict(
   log: ReviewLog,
   id: string,
@@ -202,18 +228,19 @@ export function applyVerdict(
 ): ReviewLog {
   const prev = log.items[id];
   const history = [...(prev?.history ?? []), { dayNo, verdict }];
-  const known = verdict === 'known';
+  const streak = verdict === 'known' ? (prev?.streak ?? 0) + 1 : 0;
+  const dueOn =
+    verdict === 'forgot' ? nextDue(dayNo, 0) : queued(prev) ? nextDue(dayNo, streak) : null;
+
   return {
     version: REVIEW_LOG_VERSION,
-    items: {
-      ...log.items,
-      [id]: {
-        history,
-        streak: known ? (prev?.streak ?? 0) + 1 : 0,
-        dueOn: known ? null : dayNo + FORGOT_STEP,
-      },
-    },
+    items: { ...log.items, [id]: { history, streak, dueOn } },
   };
+}
+
+/** 进过错题本吗（忘过至少一次）。已毕业的也算——它仍是自己的薄弱面 */
+export function isMistake(rec: ReviewRecord): boolean {
+  return rec.history.some((h) => h.verdict === 'forgot');
 }
 
 /** 这一条今天标过什么？没标过返回 null */
@@ -236,8 +263,11 @@ export function dueIds(dayNo: number, log: ReviewLog): string[] {
 }
 
 /**
- * 今天到期的错题项。exclude 里的（固定格已经占了的）不重复出。
+ * 今天要做的错题项。exclude 里的（固定格已经占了的）不重复出。
  * 素材索引里查不到的 id 静默丢弃——课程内容改过之后的旧记录就属于这种。
+ *
+ * 最多给 DUE_LIMIT 条，欠得再多这一段也得在 8 分钟里做得完；剩下的不销账，
+ * 到期日仍在，之后的学习日照样排队（按到期先后，先欠的先还）。
  */
 export function dueItems(
   dayNo: number,
@@ -247,6 +277,7 @@ export function dueItems(
 ): ReviewItem[] {
   const items: ReviewItem[] = [];
   for (const id of dueIds(dayNo, log)) {
+    if (items.length >= DUE_LIMIT) break;
     if (exclude.has(id)) continue;
     const material = source[id];
     if (!material) continue;

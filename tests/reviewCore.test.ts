@@ -8,6 +8,8 @@ import {
   normalizeLog,
   reviewPlanFor,
   reviewSourceFor,
+  isMistake,
+  DUE_LIMIT,
   verdictOn,
 } from '../src/scripts/reviewCore.ts';
 import type { Day } from '../src/types/curriculum.ts';
@@ -238,4 +240,126 @@ test('正常记录原样读回', () => {
 test('空记录时今日复盘与第 1 层完全一致', () => {
   const source = reviewSourceFor(11, days);
   assert.deepEqual(dueItems(11, EMPTY_LOG, source), []);
+});
+
+/* ---------- 间隔阶梯与毕业 ---------- */
+
+const ID = 'd10-drill-0';
+
+/** 按一串「在第几个学习日标了什么」依次判定，返回最终记录 */
+function judge(seq: readonly [number, 'known' | 'forgot'][]) {
+  return seq.reduce((log, [dayNo, verdict]) => applyVerdict(log, ID, dayNo, verdict), EMPTY_LOG);
+}
+
+test('答对一次往上走一档：忘了 -> +1 -> +3 -> +7', () => {
+  assert.equal(judge([[11, 'forgot']]).items[ID]?.dueOn, 12);
+  assert.equal(
+    judge([
+      [11, 'forgot'],
+      [12, 'known'],
+    ]).items[ID]?.dueOn,
+    15,
+  );
+  assert.equal(
+    judge([
+      [11, 'forgot'],
+      [12, 'known'],
+      [15, 'known'],
+    ]).items[ID]?.dueOn,
+    22,
+  );
+});
+
+test('连续 3 次「记得」后毕业：不再排队', () => {
+  const log = judge([
+    [11, 'forgot'],
+    [12, 'known'],
+    [15, 'known'],
+    [22, 'known'],
+  ]);
+  assert.equal(log.items[ID]?.streak, 3);
+  assert.equal(log.items[ID]?.dueOn, null);
+  assert.deepEqual(dueIds(999, log), []);
+});
+
+test('中途再标「忘了」：间隔重置回最短一档，连对次数清零', () => {
+  const log = judge([
+    [11, 'forgot'],
+    [12, 'known'],
+    [15, 'forgot'],
+  ]);
+  assert.equal(log.items[ID]?.dueOn, 16);
+  assert.equal(log.items[ID]?.streak, 0);
+});
+
+test('毕业后再标「忘了」：重新进入调度', () => {
+  const log = judge([
+    [11, 'forgot'],
+    [12, 'known'],
+    [15, 'known'],
+    [22, 'known'],
+    [30, 'forgot'],
+  ]);
+  assert.equal(log.items[ID]?.dueOn, 31);
+  assert.equal(log.items[ID]?.streak, 0);
+});
+
+test('固定格里顺手答对的不会被拉进错题本', () => {
+  const log = judge([[11, 'known']]);
+  assert.equal(log.items[ID]?.dueOn, null);
+  assert.equal(isMistake(log.items[ID]!), false);
+  assert.deepEqual(dueIds(99, log), []);
+});
+
+test('忘过一次就算进过错题本，毕业了也还算', () => {
+  const log = judge([
+    [11, 'forgot'],
+    [12, 'known'],
+    [15, 'known'],
+    [22, 'known'],
+  ]);
+  assert.equal(isMistake(log.items[ID]!), true);
+});
+
+test('每天最多给 DUE_LIMIT 条到期错题，先欠的先还', () => {
+  // 8 条都欠着：D01–D08 的练习第 1 题，分别在 D02..D09 到期
+  let log = EMPTY_LOG;
+  for (let n = 1; n <= 8; n += 1) log = applyVerdict(log, `d${n}-drill-0`, n + 1, 'forgot');
+
+  const source = reviewSourceFor(20, days);
+  const shown = dueItems(20, log, source);
+  assert.equal(shown.length, DUE_LIMIT);
+  assert.deepEqual(
+    shown.map((x) => x.id),
+    ['d1-drill-0', 'd2-drill-0', 'd3-drill-0', 'd4-drill-0', 'd5-drill-0'],
+  );
+});
+
+test('超出上限的到期项不销账：之后的学习日照样排队', () => {
+  let log = EMPTY_LOG;
+  for (let n = 1; n <= 8; n += 1) log = applyVerdict(log, `d${n}-drill-0`, n + 1, 'forgot');
+
+  // 还没做的那 3 条到期日没动，第二天仍然全部在队里
+  assert.equal(dueIds(21, log).length, 8);
+
+  // 前 5 条做掉之后，剩下的顶上来
+  for (const id of ['d1-drill-0', 'd2-drill-0', 'd3-drill-0', 'd4-drill-0', 'd5-drill-0']) {
+    log = applyVerdict(log, id, 20, 'known');
+  }
+  assert.deepEqual(
+    dueItems(21, log, reviewSourceFor(20, days)).map((x) => x.id),
+    ['d6-drill-0', 'd7-drill-0', 'd8-drill-0'],
+  );
+});
+
+test('固定格占过的不算进上限之外，也不重复出', () => {
+  let log = EMPTY_LOG;
+  for (let n = 1; n <= 8; n += 1) log = applyVerdict(log, `d${n}-drill-0`, n + 1, 'forgot');
+
+  const shown = dueItems(20, log, reviewSourceFor(20, days), new Set(['d1-drill-0']));
+  assert.equal(shown.length, DUE_LIMIT);
+  assert.equal(
+    shown.some((x) => x.id === 'd1-drill-0'),
+    false,
+  );
 });
