@@ -48,7 +48,7 @@ export const setupNotes = [
 
 export const reviewSchedule = [
   { when: 'D + 1', what: '默写昨天「练」栏的第 1 题，不看笔记', cost: '3 分钟' },
-  { when: 'D + 3', what: '重做 mistakes.md 里三天前的错题', cost: '5 分钟' },
+  { when: 'D + 3', what: '重做三天前「练」栏的第 1 题', cost: '5 分钟' },
   { when: 'D + 7', what: '用一句话向「不懂 SQL 的人」解释一周前的概念', cost: '3 分钟' },
   {
     when: '每周日',

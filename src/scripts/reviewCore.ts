@@ -50,10 +50,27 @@ function firstDrill(from: Day): Material | null {
 }
 
 /**
- * 三格的取材规则。顺序即渲染顺序：由近及远。
- * 眼下只有 D+1 一格，D+3 / D+7 随后补齐。
+ * 取「学」栏第 1 条知识点：小讲义对象取标题（易错点折进答案区，解释完自查），
+ * 一行式字符串直接取原文。没有知识点的天返回 null。
  */
-const RULES: readonly GapRule[] = [{ gap: 1, action: 'recite', pick: firstDrill }];
+function firstLearn(from: Day): Material | null {
+  const entry = from.learn[0];
+  if (!entry) return null;
+  const id = `d${from.no}-learn-0`;
+  if (typeof entry === 'string') return { id, prompt: entry };
+  return {
+    id,
+    prompt: entry.title,
+    ...(entry.pitfall ? { answer: { note: entry.pitfall } } : {}),
+  };
+}
+
+/** 三格的取材规则。顺序即渲染顺序：由近及远 */
+const RULES: readonly GapRule[] = [
+  { gap: 1, action: 'recite', pick: firstDrill },
+  { gap: 3, action: 'redo', pick: firstDrill },
+  { gap: 7, action: 'explain', pick: firstLearn },
+];
 
 /**
  * 某个学习日的复盘计划。
