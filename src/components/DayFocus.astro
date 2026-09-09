@@ -1,8 +1,10 @@
 ---
 import type { Day, Week } from '../types/curriculum';
 import { TAG_LABEL, PHASES } from '../types/curriculum';
-import { highlightSql } from '../utils/highlightSql';
+import { reviewPlanForDay } from '../data';
 import LearnList from './LearnList.astro';
+import AnswerFold from './AnswerFold.astro';
+import TodayReview from './TodayReview.astro';
 
 interface Props {
   day: Day;
@@ -10,6 +12,7 @@ interface Props {
 }
 
 const { day, week } = Astro.props;
+const reviewItems = reviewPlanForDay(day.no);
 const dd = String(day.no).padStart(2, '0');
 const learnLabel = day.learnLabel ?? `学 · ${day.split[0]} min`;
 const drillLabel = day.drillLabel ?? `练 · ${day.split[1]} min`;
@@ -64,18 +67,7 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
           day.drill.map((x, i) => (
             <li>
               <div set:html={x} />
-              {day.drillAnswers?.[i] && (
-                <details class="fold fold-label drill-ans">
-                  <summary>参考答案</summary>
-                  {day.drillAnswers[i]!.note && <p class="ans-note">{day.drillAnswers[i]!.note}</p>}
-                  {day.drillAnswers[i]!.sql && (
-                    <pre
-                      class="ans-sql sql-code"
-                      set:html={highlightSql(day.drillAnswers[i]!.sql!)}
-                    />
-                  )}
-                </details>
-              )}
+              {day.drillAnswers?.[i] && <AnswerFold answer={day.drillAnswers[i]!} />}
             </li>
           ))
         }
@@ -87,6 +79,9 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     <b>过关标准</b>
     <span set:html={day.pass} />
   </section>
+
+  {/* 「盘」段的内容位：排在过关标准之后，与三段时间盒里「盘」排最后的顺序一致 */}
+  <TodayReview items={reviewItems} />
 
   <div class="f-tools">
     <button class="btn" data-generate={day.no}>生成补充练习</button>
@@ -321,31 +316,8 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
     font-size: 0.8em;
   }
 
-  /* 折叠参考答案：默认收起，卡住 8 分钟再点开（课程规则之一）。
-     折叠外观（+/− 记号、小标签、展开留白）走 base.css 的 .fold / .fold-label */
-  .drill-ans {
-    margin-top: 8px;
-  }
-
-  .ans-note {
-    margin: 0 0 8px;
-    font-size: 0.88rem;
-    line-height: 1.7;
-    color: var(--ink-2);
-  }
-
-  .ans-sql {
-    margin: 0;
-    padding: 12px 14px;
-    background: var(--surface-2);
-    border: 1px solid var(--line-soft);
-    border-radius: 2px;
-    overflow-x: auto;
-    font-size: 0.8rem;
-    line-height: 1.65;
-    color: var(--ink-2);
-    white-space: pre;
-  }
+  /* 折叠参考答案（默认收起，卡住 8 分钟再点开）的标记与样式都在 AnswerFold 里，
+     天页「练」栏与「今日复盘」共用 */
 
   /* ---------- 过关 / 工具 ---------- */
 

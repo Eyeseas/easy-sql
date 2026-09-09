@@ -1,0 +1,143 @@
+---
+import type { ReviewItem } from '../scripts/reviewCore';
+import { ACTION_LABEL } from '../scripts/reviewCore';
+import AnswerFold from './AnswerFold.astro';
+
+/**
+ * 「今日复盘」：三段时间盒里「盘」那一段的内容位。
+ * 题面直接露出、答案折叠——先自己回忆再对答案，这一段的价值全在主动回忆上。
+ * 计划为空（往回越界 / 来源学习日缺素材）时整块不渲染，不留空壳。
+ */
+interface Props {
+  items: readonly ReviewItem[];
+}
+
+const { items } = Astro.props;
+const dd = (n: number) => String(n).padStart(2, '0');
+---
+
+{
+  items.length > 0 && (
+    <section class="f-review">
+      <h2>今日复盘</h2>
+
+      <ol>
+        {items.map((it) => (
+          <li>
+            <div class="r-meta">
+              <span class="r-gap">D+{it.gap}</span>
+              <span class="r-act">{ACTION_LABEL[it.action]}</span>
+              <a class="r-from" href={`/day/${it.fromDay}`}>
+                D{dd(it.fromDay)} {it.fromTitle}
+              </a>
+            </div>
+
+            <div class="r-prompt" set:html={it.prompt} />
+
+            {it.answer && <AnswerFold answer={it.answer} />}
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+<style>
+  .f-review {
+    min-width: 0;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+  }
+
+  /* 与「学」「练」两栏同一种栏头，配色跟着时间盒里的「盘」段走 */
+  .f-review h2 {
+    font-family: var(--f-mono);
+    font-size: 0.76rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .f-review ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .f-review li {
+    min-width: 0;
+  }
+
+  .f-review li + li {
+    padding-top: 18px;
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .r-meta {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    margin-bottom: 7px;
+  }
+
+  .r-gap,
+  .r-act {
+    font-family: var(--f-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    border-radius: 2px;
+    padding: 2px 7px;
+  }
+
+  .r-gap {
+    color: var(--amber);
+    border: 1px solid var(--amber);
+  }
+
+  .r-act {
+    color: var(--ink-2);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+  }
+
+  .r-from {
+    font-size: 0.8rem;
+    color: var(--ink-3);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+
+  .r-from:hover {
+    color: var(--accent);
+    border-bottom-color: var(--line);
+  }
+
+  .r-prompt {
+    color: var(--ink-2);
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+
+  /* 勾选完成后跟着「学 / 练 / 过关」一起压暗；progress.ts 在最近的 .day 上加 is-done */
+  :global(.day.is-done) .f-review {
+    opacity: 0.55;
+  }
+
+  @media (max-width: 900px) {
+    .f-review {
+      padding: 18px;
+    }
+  }
+</style>

@@ -1,5 +1,6 @@
 import type { Day, Week } from '../types/curriculum';
 import { dayMinutes } from '../types/curriculum';
+import { reviewPlanFor, type ReviewItem } from '../scripts/reviewCore';
 import { week1 } from './weeks/week1';
 import { week2 } from './weeks/week2';
 import { week3 } from './weeks/week3';
@@ -29,6 +30,11 @@ export function findDay(no: number): Day | undefined {
 
 export function weekOfDay(no: number): Week | undefined {
   return curriculum.find((w) => w.days.some((d) => d.no === no));
+}
+
+/** 某个学习日的「今日复盘」计划；调度规则见 scripts/reviewCore */
+export function reviewPlanForDay(no: number): ReviewItem[] {
+  return reviewPlanFor(no, allDays);
 }
 
 /**
