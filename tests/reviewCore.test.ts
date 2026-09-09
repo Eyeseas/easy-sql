@@ -9,6 +9,8 @@ import {
   normalizeLog,
   reviewPlanFor,
   reviewSourceFor,
+  reviewSourceAll,
+  pastOnly,
   isMistake,
   mistakeBook,
   mistakesMarkdown,
@@ -149,6 +151,21 @@ test('同一输入连续两次调用结果全等：取材确定性，不随机',
 });
 
 /* ---------- 复盘记录 ---------- */
+
+test('全课程索引收下每一天：练第 1 题 + 全部知识点，供全站共用一份', () => {
+  const all = reviewSourceAll(days);
+  assert.equal(Object.keys(all).length, days.length * 3); // 每天 1 题 + 2 条知识点
+  assert.equal(all['d12-learn-1']?.prompt, 'D12 知识点二');
+});
+
+test('pastOnly 砍掉还没教到的天：未来内容不进今天的复盘', () => {
+  const past = pastOnly(reviewSourceAll(days), 4);
+  assert.deepEqual(
+    [...new Set(Object.values(past).map((m) => m.fromDay))].sort((a, b) => a - b),
+    [1, 2, 3],
+  );
+  assert.deepEqual(pastOnly(reviewSourceAll(days), 1), {});
+});
 
 test('素材索引只收已学过的天：练第 1 题 + 全部知识点', () => {
   const source = reviewSourceFor(4, days);

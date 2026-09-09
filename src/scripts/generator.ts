@@ -219,9 +219,10 @@ export function initGenerator(): void {
     context,
   );
 
-  // 随堂默写只在有复盘项的天出现（按钮由 DayFocus 按同一条件渲染）
-  const points = loadRecallPoints();
-  if (points.length === 0) return;
+  // 随堂默写只在有复盘项的天出现（按钮由 DayFocus 按同一条件渲染）。
+  // 要考的旧知识点在点下按钮那一刻才读：review.ts 会先把补漏与到期错题补进去，
+  // 而那要等素材索引拉回来，比启动时晚。
+  if (loadRecallPoints().length === 0) return;
 
   wire(
     {
@@ -232,7 +233,8 @@ export function initGenerator(): void {
       footNs: 'recall',
       storageKey: 'sql8w.recall.v1',
       heading: '随堂默写',
-      run: (day, prior, onProgress) => generateRecall(day, points, COUNT, prior, onProgress),
+      run: (day, prior, onProgress) =>
+        generateRecall(day, loadRecallPoints(), COUNT, prior, onProgress),
     },
     context,
   );

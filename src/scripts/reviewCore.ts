@@ -120,15 +120,17 @@ export function reviewPlanFor(dayNo: number, days: readonly Day[]): ReviewItem[]
 }
 
 /**
- * 已学过的那些天的复盘素材，注入给客户端。
- * 只带题面与答案、不带讲义正文，条数随学习进度增长——到期的错题与补漏格都可能
- * 取到任意一个过去学习日的任意一条知识点，客户端手里没有课程数据，只能靠这份
- * 索引把它渲染出来。
+ * 全课程的复盘素材索引。只带题面与答案、不带讲义正文——到期的错题与补漏格都
+ * 可能取到任意一个过去学习日的任意一条素材，客户端手里没有课程数据，只能靠这
+ * 份索引把它渲染出来。
+ *
+ * 它作为一份独立的静态资源发布（/review-source.json），全站共用、浏览器缓存
+ * 一次；不再逐页内联——那样 56 个天页会把同一批内容各带一份，D56 时占掉整页
+ * 四分之三的体积。
  */
-export function reviewSourceFor(dayNo: number, days: readonly Day[]): ReviewSource {
+export function reviewSourceAll(days: readonly Day[]): ReviewSource {
   const source: ReviewSource = {};
   for (const d of days) {
-    if (d.no >= dayNo) continue;
     const drill = pickDrill(d, 0);
     if (drill) source[drill.id] = drill;
     // 知识点要收全：补漏格专挑第 2 条及以后的那些
@@ -138,6 +140,16 @@ export function reviewSourceFor(dayNo: number, days: readonly Day[]): ReviewSour
     }
   }
   return source;
+}
+
+/** 只留已学过的天：还没教到的内容不该进今天的复盘 */
+export function pastOnly(source: ReviewSource, dayNo: number): ReviewSource {
+  return Object.fromEntries(Object.entries(source).filter(([, m]) => m.fromDay < dayNo));
+}
+
+/** 某个学习日能用到的那部分索引 */
+export function reviewSourceFor(dayNo: number, days: readonly Day[]): ReviewSource {
+  return pastOnly(reviewSourceAll(days), dayNo);
 }
 
 /** 拆开复盘项 id：`d{学习日号}-{素材类型}-{下标}`。认不出的返回 null */

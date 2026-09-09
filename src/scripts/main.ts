@@ -11,7 +11,6 @@ function boot(): void {
   initProgress();
   initTimer();
   initLlmSettings();
-  // 复盘先跑：它会把补漏与到期错题写进 #recall-points，随堂默写要读那份
   initReview();
   initGenerator();
   initScrollSpy();

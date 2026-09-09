@@ -16,6 +16,7 @@ import {
   mistakeBook,
   mistakesMarkdown,
   normalizeLog,
+  pastOnly,
   removeItem,
   verdictOn,
   type MistakeEntry,
@@ -39,13 +40,17 @@ function loadLog(): ReviewLog {
   return normalizeLog(readJSON<unknown>(KEY, null));
 }
 
-/** 天页注入的复盘素材索引；不是天页就没有 */
-function loadSource(): ReviewSource {
-  const el = document.getElementById('review-source');
-  if (!el?.textContent) return {};
+/**
+ * 复盘素材索引：全站共用的一份静态 JSON，浏览器缓存一次，56 个天页不再各带一份。
+ * 拉不到就当空的——固定三格是服务端渲染的，不依赖它，页面照常能用。
+ */
+async function loadSource(dayNo: number): Promise<ReviewSource> {
   try {
-    const parsed = JSON.parse(el.textContent) as ReviewSource;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    const res = await fetch('/review-source.json');
+    if (!res.ok) return {};
+    const parsed = (await res.json()) as ReviewSource;
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    return pastOnly(parsed, dayNo);
   } catch {
     return {};
   }
@@ -170,12 +175,15 @@ export function initReview(): void {
   const dayNo = Number(section.dataset.reviewDay);
   if (!Number.isFinite(dayNo)) return;
 
-  const source = loadSource();
   let log = loadLog();
+  let source: ReviewSource = {};
 
   // 固定格已经占了的不重复出。补漏格接在三个固定格之后，到期的错题再往后排
-  const fixed = [...list.querySelectorAll<HTMLElement>('[data-review-item]')];
-  const shown = new Set(fixed.map((li) => li.dataset.reviewItem ?? ''));
+  const shown = new Set(
+    [...list.querySelectorAll<HTMLElement>('[data-review-item]')].map(
+      (li) => li.dataset.reviewItem ?? '',
+    ),
+  );
 
   /** 客户端补一条：补漏与到期错题都走这里，清空记录时要能整条撤走 */
   function append(item: ReviewItem): void {
@@ -186,19 +194,13 @@ export function initReview(): void {
     li.innerHTML = itemHtml(item);
     list.append(li);
     shown.add(item.id);
+    wireItem(li);
   }
 
-  const fill = fillItem(log, source, shown);
-  if (fill) append(fill);
-  for (const item of dueItems(dayNo, log, source, shown)) append(item);
-
-  // 随堂默写要考的旧知识点跟着一起更新：补漏与到期错题都是客户端才算得出来的，
-  // 服务端注入的那份只有三个固定格（无 JS 时的兜底）
-  syncRecallPoints([...list.querySelectorAll<HTMLElement>('[data-review-item]')], source);
-
-  for (const li of list.querySelectorAll<HTMLElement>('[data-review-item]')) {
+  /** 把一条复盘项的两个判定按钮接起来，并画上它已有的判定 */
+  function wireItem(li: HTMLElement): void {
     const id = li.dataset.reviewItem;
-    if (!id) continue;
+    if (!id) return;
     paint(li, verdictOn(log, id, dayNo));
 
     for (const btn of li.querySelectorAll<HTMLButtonElement>('[data-verdict]')) {
@@ -211,6 +213,9 @@ export function initReview(): void {
       });
     }
   }
+
+  // 服务端渲染的固定格先接起来，不等网络
+  for (const li of list.querySelectorAll<HTMLElement>('[data-review-item]')) wireItem(li);
 
   /* ---------- 错题本 ---------- */
 
@@ -270,5 +275,18 @@ export function initReview(): void {
       renderBook();
     });
 
-  renderBook();
+  // 素材索引拉回来之后才能算补漏与到期错题，以及画错题本
+  void loadSource(dayNo).then((loaded) => {
+    source = loaded;
+
+    const fill = fillItem(log, source, shown);
+    if (fill) append(fill);
+    for (const item of dueItems(dayNo, log, source, shown)) append(item);
+
+    // 随堂默写要考的旧知识点跟着一起更新：补漏与到期错题都是客户端才算得出来
+    // 的，服务端注入的那份只有三个固定格（无 JS 时的兜底）
+    syncRecallPoints([...list.querySelectorAll<HTMLElement>('[data-review-item]')], source);
+
+    renderBook();
+  });
 }
