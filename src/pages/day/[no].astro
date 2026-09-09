@@ -5,7 +5,8 @@ import WeekRail from '../../components/WeekRail.astro';
 import DayFocus from '../../components/DayFocus.astro';
 import TimerWidget from '../../components/TimerWidget.astro';
 import QaIsland from '../../qa/QaIsland';
-import { curriculum, findDay, coveredForDay } from '../../data';
+import { curriculum, allDays, findDay, coveredForDay } from '../../data';
+import { reviewSourceFor } from '../../scripts/reviewCore';
 import { tablesForDay } from '../../data/schema';
 import { site } from '../../data/meta';
 import type { GenContextDay } from '../../scripts/llm';
@@ -118,6 +119,17 @@ const schemaLines = tablesForDay(day.no)
     type="application/json"
     id="gen-context"
     set:html={JSON.stringify(genContext)}
+    is:inline
+  />
+
+  {
+    /* 复盘素材索引（见 scripts/reviewCore 的 reviewSourceFor）：到期的错题可能来自
+       任意一个过去的学习日，浏览器手里没有课程数据，只能靠这份索引把它渲染出来 */
+  }
+  <script
+    type="application/json"
+    id="review-source"
+    set:html={JSON.stringify(reviewSourceFor(day.no, allDays))}
     is:inline
   />
 </Layout>

@@ -2,6 +2,7 @@
 import { initProgress } from './progress';
 import { initTimer } from './timer';
 import { initGenerator } from './generator';
+import { initReview } from './review';
 import { initView, initScrollSpy } from './view';
 import { initLlmSettings } from './llmSettings';
 
@@ -11,6 +12,7 @@ function boot(): void {
   initTimer();
   initLlmSettings();
   initGenerator();
+  initReview();
   initScrollSpy();
 }
 

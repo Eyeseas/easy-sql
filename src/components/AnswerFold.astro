@@ -5,7 +5,7 @@ import { highlightSql } from '../utils/highlightSql';
 /**
  * 折叠的参考答案：一句话要点 + 可直接运行的 SQL。
  * 天页「练」栏与「今日复盘」共用同一份标记——两处都是「先自己写，卡住再点开」。
- * 折叠外观（+/− 记号、小标签、展开留白）走 base.css 的 .fold / .fold-label。
+ * 类名全部是全局的（base.css）：到期的错题项由 review.ts 注入，拿不到组件作用域。
  */
 interface Props {
   answer: DrillAnswer;
@@ -16,34 +16,8 @@ interface Props {
 const { answer, label = '参考答案' } = Astro.props;
 ---
 
-<details class="fold fold-label drill-ans">
+<details class="fold fold-label ans-fold">
   <summary>{label}</summary>
   {answer.note && <p class="ans-note">{answer.note}</p>}
   {answer.sql && <pre class="ans-sql sql-code" set:html={highlightSql(answer.sql)} />}
 </details>
-
-<style>
-  .drill-ans {
-    margin-top: 8px;
-  }
-
-  .ans-note {
-    margin: 0 0 8px;
-    font-size: 0.88rem;
-    line-height: 1.7;
-    color: var(--ink-2);
-  }
-
-  .ans-sql {
-    margin: 0;
-    padding: 12px 14px;
-    background: var(--surface-2);
-    border: 1px solid var(--line-soft);
-    border-radius: 2px;
-    overflow-x: auto;
-    font-size: 0.8rem;
-    line-height: 1.65;
-    color: var(--ink-2);
-    white-space: pre;
-  }
-</style>

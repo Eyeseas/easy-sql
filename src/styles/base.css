@@ -37,7 +37,7 @@ a {
 }
 
 /* ---------- 折叠块（全站统一） ----------
-   练栏参考答案（.drill-ans）、AI 补充练习（.gen-fold）共用一套机制。
+   参考答案（.ans-fold）、今日复盘、AI 补充练习（.gen-fold）共用一套机制。
    学栏讲义不折叠：天页平铺全文、周页只列标题，见 LearnList.astro。
    共用一套机制：不用浏览器原生三角，+/− 记号挂在 summary 行首左侧（负缩进），
    summary 文字与上下文文字对齐；悬停点亮 accent；展开只翻记号，文字颜色不变。
@@ -424,6 +424,140 @@ tr:last-child td {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* ---------- 参考答案折叠（天页「练」栏与今日复盘共用；后者会被 review.ts 注入） ---------- */
+
+/* 折叠外观走全局 .fold / .fold-label，这里只管排布间距 */
+.ans-fold {
+  margin-top: 8px;
+}
+
+.ans-note {
+  margin: 0 0 8px;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.ans-sql {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: var(--ink-2);
+  white-space: pre;
+}
+
+/* ---------- 今日复盘的项（固定格由 Astro 渲染，到期错题由 review.ts 注入，两边同一套类） ---------- */
+
+.rv-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.rv-list > li {
+  min-width: 0;
+}
+
+.rv-list > li + li {
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* 判定过的压暗但不撤走：这一段还没走完，学员要能回看自己刚标了什么 */
+.rv-list > li.is-judged {
+  opacity: 0.5;
+}
+
+.rv-meta {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+
+.rv-origin,
+.rv-act {
+  font-family: var(--f-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  border-radius: 2px;
+  padding: 2px 7px;
+}
+
+.rv-origin {
+  color: var(--amber);
+  border: 1px solid var(--amber);
+}
+
+/* 到期的错题用警示色标出来：它是欠账，不是当天课表的一部分 */
+.rv-origin.is-due {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.rv-act {
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.rv-from {
+  font-size: 0.8rem;
+  color: var(--ink-3);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.rv-from:hover {
+  color: var(--accent);
+  border-bottom-color: var(--line);
+}
+
+.rv-prompt {
+  color: var(--ink-2);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+.rv-judge {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.rv-judge .btn {
+  font-size: 0.76rem;
+  padding: 4px 12px;
+}
+
+.rv-judge .btn[data-verdict='known'].is-on {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.rv-judge .btn[data-verdict='forgot'].is-on {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.rv-said {
+  font-family: var(--f-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
 }
 
 /* ---------- AI 补充练习（由 generator.ts 用 innerHTML 注入，无法用组件作用域样式） ---------- */

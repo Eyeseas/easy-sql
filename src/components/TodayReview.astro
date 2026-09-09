@@ -6,43 +6,55 @@ import AnswerFold from './AnswerFold.astro';
 /**
  * 「今日复盘」：三段时间盒里「盘」那一段的内容位。
  * 题面直接露出、答案折叠——先自己回忆再对答案，这一段的价值全在主动回忆上。
- * 计划为空（往回越界 / 来源学习日缺素材）时整块不渲染，不留空壳。
+ *
+ * 这里渲染的是固定间隔的那几格（服务端就能算出来）；到期的错题项由 review.ts
+ * 在浏览器里补进同一个 <ol>，所以项一级的类名全在 base.css 里，不用作用域样式。
+ * 固定格为空时整块仍要渲染——错题可能有，交给客户端决定还留不留。
  */
 interface Props {
+  dayNo: number;
   items: readonly ReviewItem[];
 }
 
-const { items } = Astro.props;
+const { dayNo, items } = Astro.props;
 const dd = (n: number) => String(n).padStart(2, '0');
 /** 练习题折的是参考答案；口头解释折的是易错点，讲完拿它自查 */
 const foldLabel = (action: ReviewItem['action']) => (action === 'explain' ? '易错点' : '参考答案');
 ---
 
-{
-  items.length > 0 && (
-    <section class="f-review">
-      <h2>今日复盘</h2>
+<section class="f-review" data-review-day={dayNo} hidden={items.length === 0}>
+  <h2>今日复盘</h2>
 
-      <ol>
-        {items.map((it) => (
-          <li>
-            <div class="r-meta">
-              <span class="r-gap">D+{it.gap}</span>
-              <span class="r-act">{ACTION_LABEL[it.action]}</span>
-              <a class="r-from" href={`/day/${it.fromDay}`}>
-                D{dd(it.fromDay)} {it.fromTitle}
-              </a>
-            </div>
+  <ol class="rv-list" data-review-list>
+    {
+      items.map((it) => (
+        <li data-review-item={it.id}>
+          <div class="rv-meta">
+            <span class="rv-origin">D+{it.origin}</span>
+            <span class="rv-act">{ACTION_LABEL[it.action]}</span>
+            <a class="rv-from" href={`/day/${it.fromDay}`}>
+              D{dd(it.fromDay)} {it.fromTitle}
+            </a>
+          </div>
 
-            <div class="r-prompt" set:html={it.prompt} />
+          <div class="rv-prompt" set:html={it.prompt} />
 
-            {it.answer && <AnswerFold answer={it.answer} label={foldLabel(it.action)} />}
-          </li>
-        ))}
-      </ol>
-    </section>
-  )
-}
+          {it.answer && <AnswerFold answer={it.answer} label={foldLabel(it.action)} />}
+
+          <div class="rv-judge">
+            <button class="btn" data-verdict="known" type="button">
+              记得
+            </button>
+            <button class="btn" data-verdict="forgot" type="button">
+              忘了
+            </button>
+            <span class="rv-said" />
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+</section>
 
 <style>
   .f-review {
@@ -52,6 +64,10 @@ const foldLabel = (action: ReviewItem['action']) => (action === 'explain' ? '易
     border: 1px solid var(--line);
     border-radius: 3px;
     box-shadow: var(--shadow);
+  }
+
+  .f-review[hidden] {
+    display: none;
   }
 
   /* 与「学」「练」两栏同一种栏头，配色跟着时间盒里的「盘」段走 */
@@ -65,71 +81,6 @@ const foldLabel = (action: ReviewItem['action']) => (action === 'explain' ? '易
     margin-bottom: 14px;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--line-soft);
-  }
-
-  .f-review ol {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 18px;
-  }
-
-  .f-review li {
-    min-width: 0;
-  }
-
-  .f-review li + li {
-    padding-top: 18px;
-    border-top: 1px solid var(--line-soft);
-  }
-
-  .r-meta {
-    display: flex;
-    gap: 10px;
-    align-items: baseline;
-    flex-wrap: wrap;
-    margin-bottom: 7px;
-  }
-
-  .r-gap,
-  .r-act {
-    font-family: var(--f-mono);
-    font-size: 0.68rem;
-    letter-spacing: 0.1em;
-    white-space: nowrap;
-    border-radius: 2px;
-    padding: 2px 7px;
-  }
-
-  .r-gap {
-    color: var(--amber);
-    border: 1px solid var(--amber);
-  }
-
-  .r-act {
-    color: var(--ink-2);
-    background: var(--surface-2);
-    border: 1px solid var(--line);
-  }
-
-  .r-from {
-    font-size: 0.8rem;
-    color: var(--ink-3);
-    text-decoration: none;
-    border-bottom: 1px solid transparent;
-  }
-
-  .r-from:hover {
-    color: var(--accent);
-    border-bottom-color: var(--line);
-  }
-
-  .r-prompt {
-    color: var(--ink-2);
-    font-size: 1rem;
-    line-height: 1.75;
   }
 
   /* 勾选完成后跟着「学 / 练 / 过关」一起压暗；progress.ts 在最近的 .day 上加 is-done */

@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { reviewPlanFor } from '../src/scripts/reviewCore.ts';
+import {
+  EMPTY_LOG,
+  applyVerdict,
+  dueIds,
+  dueItems,
+  normalizeLog,
+  reviewPlanFor,
+  reviewSourceFor,
+  verdictOn,
+} from '../src/scripts/reviewCore.ts';
 import type { Day } from '../src/types/curriculum.ts';
 
 /** 造一个最小可用的学习日；只填复盘取材会碰到的字段 */
@@ -23,7 +32,7 @@ const days: readonly Day[] = Array.from({ length: 12 }, (_, i) => day(i + 1));
 test('常规天三格齐全，由近及远，来源天号与动作各就各位', () => {
   const plan = reviewPlanFor(11, days);
   assert.deepEqual(
-    plan.map((x) => [x.gap, x.action, x.fromDay]),
+    plan.map((x) => [x.origin, x.action, x.fromDay]),
     [
       [1, 'recite', 10],
       [3, 'redo', 8],
@@ -64,7 +73,7 @@ test('D+7 格取「学」栏第 1 条：小讲义取标题，易错点折进答�
   ];
   const [item] = reviewPlanFor(11, rich);
   assert.ok(item);
-  assert.equal(item.gap, 7);
+  assert.equal(item.origin, 7);
   assert.equal(item.action, 'explain');
   assert.equal(item.id, 'd4-learn-0');
   assert.equal(item.prompt, 'CASE 两种写法');
@@ -84,17 +93,17 @@ test('D01 往回越界：计划为空（区块整体不渲染）', () => {
 
 test('D02 只有 D+1 一格，D04 有 D+1 与 D+3 两格', () => {
   assert.deepEqual(
-    reviewPlanFor(2, days).map((x) => x.gap),
+    reviewPlanFor(2, days).map((x) => x.origin),
     [1],
   );
   assert.deepEqual(
-    reviewPlanFor(4, days).map((x) => x.gap),
+    reviewPlanFor(4, days).map((x) => x.origin),
     [1, 3],
   );
 });
 
 test('跨周不断链：D08 的 D+7 落回第一周的 D01', () => {
-  const item = reviewPlanFor(8, days).find((x) => x.gap === 7);
+  const item = reviewPlanFor(8, days).find((x) => x.origin === 7);
   assert.ok(item);
   assert.equal(item.fromDay, 1);
 });
@@ -108,7 +117,7 @@ test('课程里缺这一天时那一格不出现，不补位也不顶替', () =>
 test('来源学习日没有练习题（测评日那类）：只跳过那一格，别的格照出', () => {
   const withTestDay = [day(4), day(8, { drill: [] }), day(10), day(11)];
   assert.deepEqual(
-    reviewPlanFor(11, withTestDay).map((x) => x.gap),
+    reviewPlanFor(11, withTestDay).map((x) => x.origin),
     [1, 7],
   );
 });
@@ -116,7 +125,7 @@ test('来源学习日没有练习题（测评日那类）：只跳过那一格�
 test('来源学习日没有知识点：D+7 那一格跳过', () => {
   const noLearn = [day(4, { learn: [] }), day(8), day(10), day(11)];
   assert.deepEqual(
-    reviewPlanFor(11, noLearn).map((x) => x.gap),
+    reviewPlanFor(11, noLearn).map((x) => x.origin),
     [1, 3],
   );
 });
@@ -131,4 +140,102 @@ test('来源学习日有题但没有参考答案：照常出题面，answer 缺�
 
 test('同一输入连续两次调用结果全等：取材确定性，不随机', () => {
   assert.deepEqual(reviewPlanFor(8, days), reviewPlanFor(8, days));
+});
+
+/* ---------- 复盘记录 ---------- */
+
+test('素材索引只收已学过的天，每天两条（练第 1 题 + 学第 1 条）', () => {
+  const source = reviewSourceFor(4, days);
+  assert.deepEqual(Object.keys(source).sort(), [
+    'd1-drill-0',
+    'd1-learn-0',
+    'd2-drill-0',
+    'd2-learn-0',
+    'd3-drill-0',
+    'd3-learn-0',
+  ]);
+  assert.equal(source['d3-drill-0']?.prompt, 'D3 练习一');
+});
+
+test('标「忘了」：下一个学习日到期，连续记得次数清零', () => {
+  const log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  assert.deepEqual(log.items['d10-drill-0']?.dueOn, 12);
+  assert.equal(log.items['d10-drill-0']?.streak, 0);
+  assert.deepEqual(dueIds(12, log), ['d10-drill-0']);
+  assert.deepEqual(dueIds(11, log), []);
+});
+
+test('标「记得」：不再排队，连续记得次数加一', () => {
+  const log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'known');
+  assert.equal(log.items['d10-drill-0']?.dueOn, null);
+  assert.equal(log.items['d10-drill-0']?.streak, 1);
+  assert.deepEqual(dueIds(99, log), []);
+});
+
+test('欠下的到期项不会过期消失：到期日之后的每一天都还在', () => {
+  const log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  assert.deepEqual(dueIds(20, log), ['d10-drill-0']);
+});
+
+test('判定历史逐次累加，verdictOn 取当天最后一次', () => {
+  let log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  log = applyVerdict(log, 'd10-drill-0', 11, 'known');
+  assert.deepEqual(log.items['d10-drill-0']?.history, [
+    { dayNo: 11, verdict: 'forgot' },
+    { dayNo: 11, verdict: 'known' },
+  ]);
+  assert.equal(verdictOn(log, 'd10-drill-0', 11), 'known');
+  assert.equal(verdictOn(log, 'd10-drill-0', 12), null);
+  assert.equal(verdictOn(log, 'd8-drill-0', 11), null);
+});
+
+test('applyVerdict 不改入参', () => {
+  const before = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  const snapshot = JSON.stringify(before);
+  applyVerdict(before, 'd10-drill-0', 12, 'known');
+  assert.equal(JSON.stringify(before), snapshot);
+});
+
+test('到期错题渲染成复盘项，origin 标成 due，固定格占过的不重复出', () => {
+  const source = reviewSourceFor(12, days);
+  const log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+
+  const [item] = dueItems(12, log, source);
+  assert.ok(item);
+  assert.equal(item.origin, 'due');
+  assert.equal(item.action, 'redo');
+  assert.equal(item.prompt, 'D10 练习一');
+
+  assert.deepEqual(dueItems(12, log, source, new Set(['d10-drill-0'])), []);
+});
+
+test('素材索引里查不到的 id 静默丢弃（课程内容改过之后的旧记录）', () => {
+  const log = applyVerdict(EMPTY_LOG, 'd99-drill-7', 11, 'forgot');
+  assert.deepEqual(dueItems(12, log, reviewSourceFor(12, days)), []);
+});
+
+test('损坏 / 版本不符的记录退回空，不抛错', () => {
+  assert.deepEqual(normalizeLog(null), EMPTY_LOG);
+  assert.deepEqual(normalizeLog('坏了'), EMPTY_LOG);
+  assert.deepEqual(normalizeLog({ version: 99, items: {} }), EMPTY_LOG);
+  assert.deepEqual(normalizeLog({ version: 1 }), EMPTY_LOG);
+  assert.deepEqual(
+    normalizeLog({ version: 1, items: { a: { history: 'nope', dueOn: 1, streak: 0 } } }).items,
+    {},
+  );
+  assert.deepEqual(
+    normalizeLog({ version: 1, items: { a: { history: [{ dayNo: 'x' }], dueOn: 1, streak: 0 } } })
+      .items,
+    {},
+  );
+});
+
+test('正常记录原样读回', () => {
+  const log = applyVerdict(EMPTY_LOG, 'd10-drill-0', 11, 'forgot');
+  assert.deepEqual(normalizeLog(JSON.parse(JSON.stringify(log))), log);
+});
+
+test('空记录时今日复盘与第 1 层完全一致', () => {
+  const source = reviewSourceFor(11, days);
+  assert.deepEqual(dueItems(11, EMPTY_LOG, source), []);
 });

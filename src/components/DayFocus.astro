@@ -81,7 +81,7 @@ const totalMin = day.split.reduce((a, b) => a + b, 0);
   </section>
 
   {/* 「盘」段的内容位：排在过关标准之后，与三段时间盒里「盘」排最后的顺序一致 */}
-  <TodayReview items={reviewItems} />
+  <TodayReview dayNo={day.no} items={reviewItems} />
 
   <div class="f-tools">
     <button class="btn" data-generate={day.no}>生成补充练习</button>

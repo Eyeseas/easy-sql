@@ -1,5 +1,6 @@
 /**
- * 复盘计划核心：算出某个学习日的「今日复盘」该出哪几条复盘项。
+ * 复盘计划核心：算出某个学习日的「今日复盘」该出哪几条复盘项，以及学员标了
+ * 「记得 / 忘了」之后记录怎么变。
  *
  * 与计时核心一样是纯逻辑——不读时钟、不碰 DOM、不碰 localStorage。间隔一律按
  * 学习日编号（D01–D56）往回推，不看真实日历日期：学习日是课程的最小单位，
@@ -16,11 +17,13 @@ export const ACTION_LABEL: Record<ReviewAction, string> = {
   explain: '口头解释',
 };
 
+/** 今天为什么出现：固定间隔的那一格（值即往回数的学习日数），或到期的错题 */
+export type ReviewOrigin = number | 'due';
+
 export interface ReviewItem {
   /** 稳定 id：来源学习日 + 素材类型 + 下标。课程数据不变时跨天稳定 */
   id: string;
-  /** 往回数了几个学习日（对应复习制度里的 D+1 / D+3 / D+7） */
-  gap: number;
+  origin: ReviewOrigin;
   action: ReviewAction;
   /** 素材来自哪个学习日 */
   fromDay: number;
@@ -31,49 +34,66 @@ export interface ReviewItem {
   answer?: DrillAnswer;
 }
 
-/** 取材结果：一格从来源学习日里摘到的东西 */
-type Material = Pick<ReviewItem, 'id' | 'prompt' | 'answer'>;
+/** 一条复盘项的内容部分（不含「今天为什么出现」）。客户端按 id 取回内容用 */
+export type ReviewMaterial = Omit<ReviewItem, 'origin'>;
 
-/** 一格的规则：往回数几天、要学员做什么、从来源学习日里摘哪份素材 */
-interface GapRule {
-  gap: number;
-  action: ReviewAction;
-  pick: (from: Day) => Material | null;
-}
+/** id -> 素材。天页注入给客户端，让到期的错题也能渲染出完整题面与答案 */
+export type ReviewSource = Record<string, ReviewMaterial>;
 
-/** 取「练」栏第 1 题与它的参考答案。没有练习题的天（如测评日）返回 null */
-function firstDrill(from: Day): Material | null {
-  const task = from.drill[0];
+/* ---------- 取材 ---------- */
+
+/** 取「练」栏第 n 题与它的参考答案。没有这道题（如测评日）返回 null */
+function pickDrill(from: Day, idx: number): ReviewMaterial | null {
+  const task = from.drill[idx];
   if (!task) return null;
-  const answer = from.drillAnswers?.[0];
-  return { id: `d${from.no}-drill-0`, prompt: task, ...(answer ? { answer } : {}) };
+  const answer = from.drillAnswers?.[idx];
+  return {
+    id: `d${from.no}-drill-${idx}`,
+    action: 'redo',
+    fromDay: from.no,
+    fromTitle: from.title,
+    prompt: task,
+    ...(answer ? { answer } : {}),
+  };
 }
 
 /**
- * 取「学」栏第 1 条知识点：小讲义对象取标题（易错点折进答案区，解释完自查），
- * 一行式字符串直接取原文。没有知识点的天返回 null。
+ * 取「学」栏第 n 条知识点：小讲义对象取标题（易错点折进答案区，解释完自查），
+ * 一行式字符串直接取原文。没有这一条返回 null。
  */
-function firstLearn(from: Day): Material | null {
-  const entry = from.learn[0];
+function pickLearn(from: Day, idx: number): ReviewMaterial | null {
+  const entry = from.learn[idx];
   if (!entry) return null;
-  const id = `d${from.no}-learn-0`;
-  if (typeof entry === 'string') return { id, prompt: entry };
+  const base = {
+    id: `d${from.no}-learn-${idx}`,
+    action: 'explain' as const,
+    fromDay: from.no,
+    fromTitle: from.title,
+  };
+  if (typeof entry === 'string') return { ...base, prompt: entry };
   return {
-    id,
+    ...base,
     prompt: entry.title,
     ...(entry.pitfall ? { answer: { note: entry.pitfall } } : {}),
   };
 }
 
+/** 一格的规则：往回数几天、要学员做什么、从来源学习日里摘哪份素材 */
+interface GapRule {
+  gap: number;
+  action: ReviewAction;
+  pick: (from: Day) => ReviewMaterial | null;
+}
+
 /** 三格的取材规则。顺序即渲染顺序：由近及远 */
 const RULES: readonly GapRule[] = [
-  { gap: 1, action: 'recite', pick: firstDrill },
-  { gap: 3, action: 'redo', pick: firstDrill },
-  { gap: 7, action: 'explain', pick: firstLearn },
+  { gap: 1, action: 'recite', pick: (d) => pickDrill(d, 0) },
+  { gap: 3, action: 'redo', pick: (d) => pickDrill(d, 0) },
+  { gap: 7, action: 'explain', pick: (d) => pickLearn(d, 0) },
 ];
 
 /**
- * 某个学习日的复盘计划。
+ * 某个学习日固定间隔的那几格。
  * 往回越界（如 D01）、来源学习日没有可取素材时，那一格直接不出现——
  * 不补位、不拿别的天顶替、不产出空壳项。
  */
@@ -86,14 +106,151 @@ export function reviewPlanFor(dayNo: number, days: readonly Day[]): ReviewItem[]
     if (!from) continue;
     const material = rule.pick(from);
     if (!material) continue;
-    plan.push({
-      ...material,
-      gap: rule.gap,
-      action: rule.action,
-      fromDay: from.no,
-      fromTitle: from.title,
-    });
+    // 固定格的动作由格子决定（同一道题 D+1 是默写、D+3 是重做）
+    plan.push({ ...material, action: rule.action, origin: rule.gap });
   }
 
   return plan;
+}
+
+/**
+ * 已学过的那些天的复盘素材，注入给客户端。
+ * 只带题面与答案、不带讲义正文，条数随学习进度增长——到期的错题可能来自任意
+ * 一个过去的学习日，客户端手里没有课程数据，只能靠这份索引把它渲染出来。
+ */
+export function reviewSourceFor(dayNo: number, days: readonly Day[]): ReviewSource {
+  const source: ReviewSource = {};
+  for (const d of days) {
+    if (d.no >= dayNo) continue;
+    for (const m of [pickDrill(d, 0), pickLearn(d, 0)]) {
+      if (m) source[m.id] = m;
+    }
+  }
+  return source;
+}
+
+/* ---------- 复盘记录 ---------- */
+
+export type ReviewVerdict = 'known' | 'forgot';
+
+/** 一次判定：在哪个学习日标了什么 */
+export interface ReviewJudgement {
+  dayNo: number;
+  verdict: ReviewVerdict;
+}
+
+export interface ReviewRecord {
+  history: readonly ReviewJudgement[];
+  /** 下次到期的学习日号；不再排队时为 null */
+  dueOn: number | null;
+  /** 连续「记得」次数 */
+  streak: number;
+}
+
+export const REVIEW_LOG_VERSION = 1;
+
+export interface ReviewLog {
+  version: number;
+  items: Record<string, ReviewRecord>;
+}
+
+export const EMPTY_LOG: ReviewLog = { version: REVIEW_LOG_VERSION, items: {} };
+
+/** 标「忘了」之后隔几个学习日再来 */
+const FORGOT_STEP = 1;
+
+function isVerdict(x: unknown): x is ReviewVerdict {
+  return x === 'known' || x === 'forgot';
+}
+
+/**
+ * 把读回来的东西整成一份可用的记录。形状不对、版本不认识就退回空记录——
+ * 复盘记录坏了顶多是白复习一遍，不该让天页报错白屏。
+ */
+export function normalizeLog(raw: unknown): ReviewLog {
+  if (typeof raw !== 'object' || raw === null) return EMPTY_LOG;
+  const log = raw as Partial<ReviewLog>;
+  if (log.version !== REVIEW_LOG_VERSION) return EMPTY_LOG;
+  if (typeof log.items !== 'object' || log.items === null) return EMPTY_LOG;
+
+  const items: Record<string, ReviewRecord> = {};
+  for (const [id, value] of Object.entries(log.items)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const rec = value as Partial<ReviewRecord>;
+    if (!Array.isArray(rec.history)) continue;
+    if (rec.dueOn !== null && typeof rec.dueOn !== 'number') continue;
+    if (typeof rec.streak !== 'number') continue;
+
+    const history = rec.history.filter(
+      (h): h is ReviewJudgement =>
+        typeof h === 'object' && h !== null && typeof h.dayNo === 'number' && isVerdict(h.verdict),
+    );
+    if (history.length === 0) continue;
+
+    items[id] = { history, dueOn: rec.dueOn, streak: rec.streak };
+  }
+
+  return { version: REVIEW_LOG_VERSION, items };
+}
+
+/** 记一次判定。纯函数：返回新记录，不改入参 */
+export function applyVerdict(
+  log: ReviewLog,
+  id: string,
+  dayNo: number,
+  verdict: ReviewVerdict,
+): ReviewLog {
+  const prev = log.items[id];
+  const history = [...(prev?.history ?? []), { dayNo, verdict }];
+  const known = verdict === 'known';
+  return {
+    version: REVIEW_LOG_VERSION,
+    items: {
+      ...log.items,
+      [id]: {
+        history,
+        streak: known ? (prev?.streak ?? 0) + 1 : 0,
+        dueOn: known ? null : dayNo + FORGOT_STEP,
+      },
+    },
+  };
+}
+
+/** 这一条今天标过什么？没标过返回 null */
+export function verdictOn(log: ReviewLog, id: string, dayNo: number): ReviewVerdict | null {
+  const history = log.items[id]?.history;
+  if (!history) return null;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const h = history[i];
+    if (h && h.dayNo === dayNo) return h.verdict;
+  }
+  return null;
+}
+
+/** 今天（含之前欠下的）到期的复盘项 id，按到期先后排定 */
+export function dueIds(dayNo: number, log: ReviewLog): string[] {
+  return Object.entries(log.items)
+    .filter(([, rec]) => rec.dueOn !== null && rec.dueOn <= dayNo)
+    .sort(([aId, a], [bId, b]) => (a.dueOn ?? 0) - (b.dueOn ?? 0) || aId.localeCompare(bId))
+    .map(([id]) => id);
+}
+
+/**
+ * 今天到期的错题项。exclude 里的（固定格已经占了的）不重复出。
+ * 素材索引里查不到的 id 静默丢弃——课程内容改过之后的旧记录就属于这种。
+ */
+export function dueItems(
+  dayNo: number,
+  log: ReviewLog,
+  source: ReviewSource,
+  exclude: ReadonlySet<string> = new Set(),
+): ReviewItem[] {
+  const items: ReviewItem[] = [];
+  for (const id of dueIds(dayNo, log)) {
+    if (exclude.has(id)) continue;
+    const material = source[id];
+    if (!material) continue;
+    items.push({ ...material, origin: 'due' });
+  }
+  return items;
 }
