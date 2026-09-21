@@ -119,7 +119,7 @@ where c.name = '子分类1';`,
       title: '「花得比平均多的用户」：子查询三个位置',
       brief:
         '老板：「找出消费高于平均水平的那批人，我给他们发券。」平均值本身就要一条查询来算--你第一次需要查询里套查询。',
-      split: [40, 65, 15],
+      split: [35, 70, 15],
       learn: [
         {
           title: '标量子查询（SELECT 里）：必须只返回一行一列',
@@ -177,6 +177,8 @@ where total_amount >= (select avg(total_amount)
         '用 <code>WHERE id IN (子查询)</code> 查有过已支付记录的订单',
         '写一个返回多行的标量子查询，记录报错信息',
         '同一需求分别用派生表和 CTE 写，对比可读性',
+        '月报续集：商品 GMV 的 TOP10 及其占总 GMV 的比例（D13 缺的工具今天到货）',
+        '月报续集：复购用户数（下单 ≥ 2 次的用户）及复购率',
       ],
       drillAnswers: [
         {
@@ -226,7 +228,30 @@ with 每用户单数 as (
 select u.name, t.单数
 from 每用户单数 t
 join users u on u.id = t.user_id;`,
-          note: '两层结果完全一致，优化器眼里也是同一个东西；差别在读法。这题只有一层，差异不大--嵌到三层时 CTE 从上往下读的优势会碾压式显现，明天整天都在写它。',
+          note: '两层结果完全一致，优化器眼里也是同一个东西；差别在读法。这题只有一层，差异不大--嵌到三层时 CTE 从上往下读的优势会碾压式显现，D19 整天都在写它。',
+        },
+        {
+          sql: `select p.name as 商品,
+       sum(i.qty * i.unit_price) as gmv,
+       round(100.0 * sum(i.qty * i.unit_price)
+             / (select sum(qty * unit_price) from order_items), 1) as 占比
+from order_items i
+join products p on p.id = i.product_id
+group by p.id, p.name
+order by gmv desc
+limit 10;`,
+          note: 'D13 当时卡住的就是这个分母。为什么不能直接写 sum / sum？因为 GROUP BY 之后每组的 sum 只看得见本组，全站总额不在这个分组的视野里，必须另起一条查询--标量子查询返回一行一列、整条 SQL 只算一次，正好摆在除号右边当常量。LIMIT 发生在最后，不影响分母。自洽校验：去掉 LIMIT，全部商品的占比之和 = 100%。（D26 你会用 sum(...) over () 把它写成一行。）',
+        },
+        {
+          sql: `select count(*) filter (where 单数 >= 2) as 复购用户数,
+       count(*) as 下单用户数,
+       round(100.0 * count(*) filter (where 单数 >= 2) / count(*), 1) as 复购率
+from (
+  select user_id, count(*) as 单数
+  from orders
+  group by user_id
+) t;`,
+          note: 'D13 的另一道欠账，缺的就是 from (子查询) t 这一步。「先聚合、再对聚合结果统计」是派生表最典型的场景：里层把每人压成一行（粒度 = 用户），外层对这批行再数一次。三要素翻译：粒度 = 用户、过滤 = 下过单的用户、度量 = 单数 ≥ 2 的占比。注意分母是「下过单的用户」而不是全部注册用户--两个口径差一截，月报里必须写明用的哪个。',
         },
       ],
       pass: '能说出标量子查询在什么情况下会被执行 N 次（相关子查询）。',
@@ -593,7 +618,7 @@ order by 1, 2;`,
         },
       ],
       drill: [
-        '把 D13 里最复杂的一题用 CTE 重写，对比可读性',
+        'D13 的最后一笔欠账：「每月新增用户数与当月下单用户数」--两段各自聚合，再对齐成一张表',
         '写一个三级 CTE：清洗 -&gt; 聚合 -&gt; 排名',
         '同一查询加与不加 <code>MATERIALIZED</code>，对比执行计划差异',
         '「近 3 个月每月新客 GMV 与老客 GMV」：先写五步拆解，再写 SQL',
@@ -601,7 +626,24 @@ order by 1, 2;`,
       ],
       drillAnswers: [
         {
-          note: '挑法：找当时嵌套两层以上、中间结果没有名字的那题。改法：把每层子查询拎出来，按「它算的是什么」起业务名变成 CTE，逻辑一行不改。预期现象：读 SQL 从「从外往里、数括号」变成「从上往下读流水线」；检验标准是隔一天再读，CTE 版能一眼说出每段在干嘛，原版要重新数括号。',
+          sql: `with new_u as (                          -- 注册侧：按月数新增用户
+  select date_trunc('month', created_at) as 月份, count(*) as 新增用户数
+  from users
+  group by 1
+),
+act as (                                 -- 下单侧：按月数活跃用户（去重）
+  select date_trunc('month', created_at) as 月份,
+         count(distinct user_id) as 当月下单用户数
+  from orders
+  group by 1
+)
+select coalesce(n.月份, a.月份) as 月份,
+       coalesce(n.新增用户数, 0) as 新增用户数,
+       coalesce(a.当月下单用户数, 0) as 当月下单用户数
+from new_u n
+full join act a on a.月份 = n.月份
+order by 1;`,
+          note: '两个数字来自不同的表、不同的时间列，一条 SQL 聚不出来--必须先各自聚成「月份表」再对齐，这正是 CTE 存在的理由：给两段中间结果起名字，主查询只负责拼。为什么是 FULL JOIN：用户注册横跨两年、订单只有近 90 天，两边的月份集合互相都有对方没有的，LEFT 会丢掉只有订单的月、INNER 两头都丢。对齐后 coalesce 兜两处：月份本身（哪边有取哪边）和计数（没有就是 0）。',
         },
         {
           sql: `with 清洗 as (                            -- ① 剔除脏数据：负金额、空状态

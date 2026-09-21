@@ -410,7 +410,7 @@ order by 单数 desc;`,
 from orders
 group by 1
 order by 1;`,
-          note: '这是「搜索式」CASE，条件从上往下第一个命中生效。sum(count(*)) over () 是窗口函数算总数，不用再写子查询（W3 正式讲）。',
+          note: '这是「搜索式」CASE，条件从上往下第一个命中生效。sum(count(*)) over () 是窗口函数算总数，不用再写子查询（W4 正式讲）。',
         },
         {
           sql: `select created_at::date as 日期, count(*) as 单数
