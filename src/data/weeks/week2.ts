@@ -572,7 +572,7 @@ where i.product_id = (select id from products where name = '商品2');`,
 from orders
 order by user_id, created_at desc;   -- 每个用户时间最大的一单`,
           pitfall:
-            'ORDER BY 打头的列必须和 DISTINCT ON 的列一致，否则报错。它和窗口函数 row_number() 的分工在 W3 会展开。',
+            'ORDER BY 打头的列必须和 DISTINCT ON 的列一致，否则报错。它和窗口函数 row_number() 的分工在 W4 会展开。',
         },
       ],
       drill: [
@@ -668,47 +668,38 @@ from (
       ],
       drillLabel: '练 · 95 min · 每题单条 SQL',
       drill: [
-        '商品 GMV 的 TOP10 及其占总 GMV 的比例',
-        '每月新增用户数与当月下单用户数',
+        'GMV 三个口径对账：全部订单 / 只算已支付 / 已支付且剔除负金额',
+        '本月每日订单数与 GMV，<b>没有订单的日期要补 0</b>',
         '客单价最高的 TOP10 商品',
         '下单超 24 小时仍未支付的订单明细',
         '各城市 GMV 排名',
-        '复购用户数（下单 ≥ 2 次的用户）及复购率',
+        '从未下过单的注册用户数及其占比',
         '每个用户的首单时间与首单金额',
         '各状态订单的平均支付时长（paid_at 与 created_at 之差）',
       ],
       drillAnswers: [
         {
-          sql: `select p.name as 商品,
-       sum(i.qty * i.unit_price) as gmv,
-       round(100.0 * sum(i.qty * i.unit_price)
-             / sum(sum(i.qty * i.unit_price)) over (), 1) as 占比
-from order_items i
-join products p on p.id = i.product_id
-group by p.id, p.name
-order by gmv desc
-limit 10;`,
-          note: 'sum(...) over () 在分组之后、LIMIT 之前算出全局总 GMV，正好当分母。自洽校验：去掉 LIMIT，全部商品的占比之和 = 100%；TOP10 之和当然小于 100%。',
+          sql: `select coalesce(u.city, '未知') as 城市,
+       sum(o.total_amount) as 全部口径,
+       sum(o.total_amount) filter (where o.status = 2) as 已支付口径,
+       sum(greatest(o.total_amount, 0)) filter (where o.status = 2) as 剔负口径
+from orders o
+left join users u on u.id = o.user_id
+group by 1
+order by 已支付口径 desc nulls last;`,
+          note: '月报第一件事是把口径钉死：同一个「GMV」，三种算法三个数--全部订单（含未支付、已取消）、只算已支付、再把 D01 埋的负金额压成 0。三列并排摆出来，差额来自哪一眼就看见。用 LEFT JOIN 是因为 city 可能为空，别让 INNER 把订单吃掉。选哪个口径都算对，错的是不把选择写进报表备注。',
         },
         {
-          sql: `with new_u as (
-  select date_trunc('month', created_at) as 月份, count(*) as 新增用户数
-  from users
-  group by 1
-),
-act as (
-  select date_trunc('month', created_at) as 月份,
-         count(distinct user_id) as 当月下单用户数
-  from orders
-  group by 1
-)
-select coalesce(n.月份, a.月份) as 月份,
-       coalesce(n.新增用户数, 0) as 新增用户数,
-       coalesce(a.当月下单用户数, 0) as 当月下单用户数
-from new_u n
-full join act a on a.月份 = n.月份
-order by 1;`,
-          note: '两个数字来自不同的表和时间列，先各自按月聚合成「月份表」再对齐。用户注册横跨两年、订单只有近 90 天--必须 FULL JOIN，INNER JOIN 会把没订单的月份整行吃掉。',
+          sql: `select d.日期::date as 日期,
+       count(o.id) as 单数,
+       coalesce(sum(o.total_amount), 0) as gmv
+from generate_series(date_trunc('month', current_date),
+                     current_date,
+                     interval '1 day') as d(日期)
+left join orders o on o.created_at::date = d.日期::date
+group by d.日期
+order by d.日期;`,
+          note: 'D06 的补零套路原样搬过来，只把「近 30 天」换成「本月 1 号到今天」：日历在左、订单在右，LEFT JOIN。两个坑都在右表没匹配上的那天--必须 count(o.id) 不能 count(*)（没订单的那天 LEFT JOIN 也给一行，count(*) 会数成 1），sum 对空集得 NULL 不是 0，要 coalesce 兜住。',
         },
         {
           sql: `select p.name as 商品,
@@ -736,24 +727,21 @@ order by o.created_at, o.id;`,
         },
         {
           sql: `select u.city,
-       sum(o.total_amount) as gmv,
-       rank() over (order by sum(o.total_amount) desc) as 排名
+       sum(o.total_amount) as gmv
 from orders o
 join users u on o.user_id = u.id
 group by u.city
-order by 排名;`,
-          note: '窗口函数在 GROUP BY 之后求值，所以 over () 里能直接引用 sum(...)--排序键就是聚合结果。city 为 NULL 的组照常参与排名，展示时标「未知」。',
+order by gmv desc;`,
+          note: '「排名」在这里就是排序：ORDER BY 能引用 SELECT 里的别名 gmv，读到第几行就是第几名。city 为 NULL 的组照常成一组，展示时标「未知」。真要把名次落成一列、还要处理并列，那是 rank() 的活，D23 讲。',
         },
         {
-          sql: `select count(*) filter (where 单数 >= 2) as 复购用户数,
-       count(*) as 下单用户数,
-       round(100.0 * count(*) filter (where 单数 >= 2) / count(*), 1) as 复购率
-from (
-  select user_id, count(*) as 单数
-  from orders
-  group by user_id
-) t;`,
-          note: '三要素翻译：粒度 = 用户（先压成每人一行）、过滤 = 下过单的用户、度量 = 单数 ≥ 2 的占比。分母是「下过单的用户」而不是全部注册用户--两个口径差一截，月报里必须写明用的哪个。',
+          sql: `select count(distinct u.id) as 注册用户数,
+       count(distinct u.id) filter (where o.id is null) as 从未下单,
+       round(100.0 * count(distinct u.id) filter (where o.id is null)
+             / count(distinct u.id), 1) as 占比
+from users u
+left join orders o on o.user_id = u.id;`,
+          note: 'D09/D10/D11 三个点凑一块：LEFT JOIN 之后一个用户被放大成多行（下过 N 单就 N 行），所以分母必须 count(distinct u.id) 而不是 count(*)；o.id is null 就是 D10 的反连接，圈出没匹配上的那批；FILTER 让分子分母在同一条 SQL 里出来。自洽校验：从未下单 + 下过单 = 注册用户数。D12 用 EXCEPT 查的是同一批人，这里多要了一个占比。',
         },
         {
           sql: `select distinct on (o.user_id)
@@ -761,7 +749,7 @@ from (
 from orders o
 join users u on u.id = o.user_id
 order by o.user_id, o.created_at;`,
-          note: 'D12 的 DISTINCT ON 直接派上用场：第二排序键改成升序，留下的就是最早一单。窗口函数 row_number() 也能做，W3 展开。',
+          note: 'D12 的 DISTINCT ON 直接派上用场：第二排序键改成升序，留下的就是最早一单。窗口函数 row_number() 也能做，W4 展开。',
         },
         {
           sql: `select coalesce(status::text, '未知') as 状态,
@@ -774,7 +762,7 @@ order by 1;`,
           note: '只有已支付单有 paid_at，其余状态 avg 直接得 NULL（聚合跳空）--「平均支付时长」这个指标只对 status = 2 有意义。另外那 20 单脏数据（支付早于下单）是负数，会把均值拉低一点，正式月报该剔除。',
         },
       ],
-      pass: '8 题全部单条 SQL 完成；第 1 题的占比之和必须等于 100%（自洽校验）。',
+      pass: '8 题全部单条 SQL 完成；第 1 题三个 GMV 口径的差额，每一笔都能说出来自哪。',
     },
     {
       no: 14,
